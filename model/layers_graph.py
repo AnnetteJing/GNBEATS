@@ -18,8 +18,8 @@ class UndirGraphConv(nn.Module):
         self.cheb_k = args.cheb_k # K. 1st order approx if K = 1
         self.adj_mat_type = args.adj_mat_type
         self.weights_pool = nn.Parameter(
-            torch.FloatTensor(self.embed_dim, self.cheb_k, self.c_in, self.c_out)) # (D, K, C_i, C_o)
-        self.bias_pool = nn.Parameter(torch.FloatTensor(self.embed_dim, self.c_out))  # (D, C_o)
+            torch.randn(self.embed_dim, self.cheb_k, self.c_in, self.c_out)) # (D, K, C_i, C_o)
+        self.bias_pool = nn.Parameter(torch.randn(self.embed_dim, self.c_out))  # (D, C_o)
 
     def calc_adj_mat(self, node_embeddings: torch.Tensor) -> torch.Tensor:
         """
@@ -32,7 +32,7 @@ class UndirGraphConv(nn.Module):
         if self.adj_mat_type == "Bai":
             return F.softmax(F.relu(adj_mat), dim=0)
         else:
-            adj_mat_rowsum = torch.sum(adj_mat, axis=1).reshape(self.embed_dim, 1)
+            adj_mat_rowsum = torch.sum(adj_mat, axis=1)[:, None]
             return adj_mat/torch.sqrt(adj_mat_rowsum @ adj_mat_rowsum.T)
 
     def forward(self, x: torch.Tensor, node_embeddings: torch.Tensor) -> torch.Tensor:
@@ -76,13 +76,15 @@ class DirGraphConv(nn.Module):
         weights_shape = self.embed_dim, self.cheb_k, self.c_in, self.c_out
         bias_shape = self.embed_dim, self.c_out
         if args.param_type == "real":
-            self.weights_pool = nn.Parameter(torch.FloatTensor(*weights_shape)) # (D, K, C_i, C_o)
-            self.bias_pool = nn.Parameter(torch.FloatTensor(*bias_shape))  # (D, C_o)
+            self.weights_pool = nn.Parameter(
+                torch.randn(*weights_shape).type(torch.complex64)) # (D, K, C_i, C_o)
+            self.bias_pool = nn.Parameter(
+                torch.randn(*bias_shape).type(torch.complex64))  # (D, C_o)
         elif args.param_type == "complex":
             self.weights_pool = nn.Parameter(torch.complex(
-                torch.FloatTensor(*weights_shape), torch.FloatTensor(*weights_shape)))
+                torch.randn(*weights_shape), torch.randn(*weights_shape)))
             self.bias_pool = nn.Parameter(torch.complex(
-                torch.FloatTensor(*bias_shape), torch.FloatTensor(*bias_shape)))
+                torch.randn(*bias_shape), torch.randn(*bias_shape)))
         self.activation = (
             ComplexActivation(args.activation_type) if args.activation_type is not None else None)
         self.norm_laplacian = args.norm_laplacian
@@ -97,7 +99,7 @@ class DirGraphConv(nn.Module):
         laplacian = node_embeddings @ node_embeddings.conj().T
         if self.activation is not None:
             laplacian = self.activation(laplacian)
-        if self.norm_laplacian == "max_sv": # Maximum singular value
+        if self.norm_laplacian == "spec": # Spectral (maximum singular value)
             norm_factor = torch.linalg.matrix_norm(laplacian, ord=2)
         elif self.norm_laplacian == "frob": # Frobenius
             norm_factor = torch.linalg.matrix_norm(laplacian)
@@ -116,12 +118,11 @@ class DirGraphConv(nn.Module):
         laplacian = self.calc_laplacian(node_embeddings)
         weights = torch.einsum("vd,dkio->vkio", node_embeddings, self.weights_pool) # (V, K, C_i, C_o)
         bias = torch.matmul(node_embeddings, self.bias_pool)  # (V, C_o)
-        device = laplacian.device
-        cheb_polys = [torch.eye(self.num_nodes, dtype=complex).to(device), laplacian]
+        cheb_polys = [torch.eye(self.num_nodes, dtype=laplacian.dtype).to(laplacian.device), laplacian]
         for k in range(2, self.cheb_k):
             cheb_polys.append(2*cheb_polys[k - 1] - cheb_polys[k - 2])
         cheb_polys = torch.stack(cheb_polys, dim=0) # (K, V, V)
-        cheb_polys = torch.einsum("kuv,bvi->buki", cheb_polys, x) # (B, V, K, C_i)
+        cheb_polys = torch.einsum("kuv,bvi->buki", cheb_polys, x.type(cheb_polys.dtype)) # (B, V, K, C_i)
         x_gconv = torch.einsum("bvki,vkio->bvo", cheb_polys, weights) + bias # (B, V, C_o)
         if unwind:
             return torch.view_as_real(x_gconv).flatten(2, 3) # (B, V, 2*C_o)
@@ -134,8 +135,6 @@ class DirGraphConv(nn.Module):
 ##################################################
 class ComplexActivation(nn.Module):
     """
-    Complex version of ReLU
-    ----------------------
     method: One of "arg_bdd", "real_imag", and "phase_amp"
         arg_bdd (Argument bound):
             z if -pi/2 <= arg(z) < pi/2, 0 otherwise
@@ -155,7 +154,7 @@ class ComplexActivation(nn.Module):
         elif self.method == "real_imag":
             return F.relu(x.real) + 1.j*F.relu(x.imag)
         elif self.method == "phase_amp":
-            return F.tanh(x.abs())*torch.exp(1.j*x.angle())
+            return torch.tanh(x.abs())*torch.exp(1.j*x.angle())
 
 
 
