@@ -1,4 +1,5 @@
 import math
+from turtle import forward
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -29,7 +30,7 @@ class UndirGraphConv(nn.Module):
         """
         adj_mat = node_embeddings @ node_embeddings.T
         if self.adj_mat_type == "Bai":
-            return F.softmax(F.relu(adj_mat))
+            return F.softmax(F.relu(adj_mat), dim=0)
         else:
             adj_mat_rowsum = torch.sum(adj_mat, axis=1).reshape(self.embed_dim, 1)
             return adj_mat/torch.sqrt(adj_mat_rowsum @ adj_mat_rowsum.T)
@@ -58,7 +59,8 @@ class UndirGraphConv(nn.Module):
             cheb_polys = torch.stack(cheb_polys, dim=0) # (K, V, V)
             cheb_polys = torch.einsum("kuv,bvi->buki", cheb_polys, x) # (B, V, K, C_i)
             x_gconv = torch.einsum("bvki,vkio->bvo", cheb_polys, weights) # (B, V, C_o)
-        return x_gconv
+        return x_gconv + bias
+
 
 ##################################################
 ## Directed Graph Convolution
@@ -66,16 +68,94 @@ class UndirGraphConv(nn.Module):
 class DirGraphConv(nn.Module):
     def __init__(self, args):
         super(DirGraphConv, self).__init__()
+        self.num_nodes = args.num_nodes # V
+        self.embed_dim = args.embed_dim # D
+        self.c_in = args.c_in # C_i
+        self.c_out = args.c_out # C_o
+        self.cheb_k = args.cheb_k # K
+        weights_shape = self.embed_dim, self.cheb_k, self.c_in, self.c_out
+        bias_shape = self.embed_dim, self.c_out
+        if args.param_type == "real":
+            self.weights_pool = nn.Parameter(torch.FloatTensor(*weights_shape)) # (D, K, C_i, C_o)
+            self.bias_pool = nn.Parameter(torch.FloatTensor(*bias_shape))  # (D, C_o)
+        elif args.param_type == "complex":
+            self.weights_pool = nn.Parameter(torch.complex(
+                torch.FloatTensor(*weights_shape), torch.FloatTensor(*weights_shape)))
+            self.bias_pool = nn.Parameter(torch.complex(
+                torch.FloatTensor(*bias_shape), torch.FloatTensor(*bias_shape)))
+        self.activation = (
+            ComplexActivation(args.activation_type) if args.activation_type is not None else None)
+        self.norm_laplacian = args.norm_laplacian
+
+    def calc_laplacian(self, node_embeddings: torch.Tensor) -> torch.Tensor:
+        """
+        -------Arguments-------
+        node_embeddings: (V, D)
+        --------Outputs--------
+        normalized_laplacian: (V, V)
+        """
+        laplacian = node_embeddings @ node_embeddings.conj().T
+        if self.activation is not None:
+            laplacian = self.activation(laplacian)
+        if self.norm_laplacian == "max_sv": # Maximum singular value
+            norm_factor = torch.linalg.matrix_norm(laplacian, ord=2)
+        elif self.norm_laplacian == "frob": # Frobenius
+            norm_factor = torch.linalg.matrix_norm(laplacian)
+        return laplacian/norm_factor
+    
+    def forward(
+            self, x: torch.Tensor, node_embeddings: torch.Tensor, unwind: bool=False
+            ) -> torch.Tensor:
+        """
+        -------Arguments-------
+        x: (B, V, C_i)
+        node_embeddings: (V, D)
+        --------Outputs--------
+        x_gconv: (B, V, C_o) complex OR (B, V, 2*C_o) real
+        """
+        laplacian = self.calc_laplacian(node_embeddings)
+        weights = torch.einsum("vd,dkio->vkio", node_embeddings, self.weights_pool) # (V, K, C_i, C_o)
+        bias = torch.matmul(node_embeddings, self.bias_pool)  # (V, C_o)
+        device = laplacian.device
+        cheb_polys = [torch.eye(self.num_nodes, dtype=complex).to(device), laplacian]
+        for k in range(2, self.cheb_k):
+            cheb_polys.append(2*cheb_polys[k - 1] - cheb_polys[k - 2])
+        cheb_polys = torch.stack(cheb_polys, dim=0) # (K, V, V)
+        cheb_polys = torch.einsum("kuv,bvi->buki", cheb_polys, x) # (B, V, K, C_i)
+        x_gconv = torch.einsum("bvki,vkio->bvo", cheb_polys, weights) + bias # (B, V, C_o)
+        if unwind:
+            return torch.view_as_real(x_gconv).flatten(2, 3) # (B, V, 2*C_o)
+        else:
+            return x_gconv
 
 
-
-
-
-
-
-
-
-
+##################################################
+## Complex Activation Functions
+##################################################
+class ComplexActivation(nn.Module):
+    """
+    Complex version of ReLU
+    ----------------------
+    method: One of "arg_bdd", "real_imag", and "phase_amp"
+        arg_bdd (Argument bound):
+            z if -pi/2 <= arg(z) < pi/2, 0 otherwise
+        real_imag (Real-imaginary):
+            ReLU(z.real) + i*ReLU(z.imag)
+        phase_amp (Phase-amplitude):
+            tanh(|z|)*exp(i*arg(z))
+    """
+    def __init__(self, method: str="arg_bdd"):
+        super(ComplexActivation, self).__init__()
+        self.method = method
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.method == "arg_bdd":
+            return torch.where(
+                (-torch.pi/2 <= torch.angle(x)) & (torch.angle(x) < torch.pi/2), x, 0)
+        elif self.method == "real_imag":
+            return F.relu(x.real) + 1.j*F.relu(x.imag)
+        elif self.method == "phase_amp":
+            return F.tanh(x.abs())*torch.exp(1.j*x.angle())
 
 
 
