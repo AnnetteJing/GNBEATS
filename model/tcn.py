@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from torch.nn.utils import weight_norm
+from typing import Union, Tuple
 from .layers_temporal import ParallelConv1d, ParallelCausalConv1d
 
 
@@ -55,9 +56,11 @@ class TemporalBlock(nn.Module):
 
 class TCN(nn.Module):
     def __init__(
-            self, channels: list, kernel_size: int, 
-            padding_mode: str="zeros", dropout_prob: int=0.2):
+            self, input_len: int, channels: list, kernel_size: int, 
+            padding_mode: str="zeros", dropout_prob: int=0.2, 
+            out_len: Union[None, int]=None):
         super(TCN, self).__init__()
+        self.input_len = input_len # T
         self.channels = channels
         self.kernel_size = kernel_size
         self.padding_mode = padding_mode
@@ -69,14 +72,22 @@ class TCN(nn.Module):
                 dilation=2**i, padding_mode=padding_mode, dropout_prob=dropout_prob
             ))
         self.layers = nn.Sequential(*layers)
+        if out_len is not None:
+            self.out_layer = nn.Linear(channels[-1]*input_len, out_len)
+        else:
+            self.out_layer = None
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         -------Arguments-------
         x: (B, V, channels[0], T)
         --------Outputs--------
-        out: (B, V, channels[-1], T)
+        out: (B, V, channels[-1], T) OR (B, V, outlen)
         """
-        return self.layers(x)
+        out = self.layers(x)
+        if self.out_layer is None:
+            return out
+        else:
+            return self.out_layer(out.flatten(2, 3))
     
     

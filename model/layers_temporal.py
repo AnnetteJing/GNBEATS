@@ -1,5 +1,3 @@
-import math
-from turtle import forward
 import numpy as np
 import torch
 import torch.nn as nn
