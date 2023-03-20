@@ -3,7 +3,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import MessagePassing
 from torch_geometric.utils import add_self_loops, degree, dense_to_sparse
-from utils.util_functions import ComplexActivation
+from .. utils.util_functions import ComplexActivation
+from .layers_temporal import FullyConnectedNet
+from .tcn import TCN
+from .scinet import StackedSCINet
 
 
 ##################################################
@@ -137,6 +140,10 @@ class MagGraphConv(nn.Module):
 class MPGraphConv(MessagePassing):
     def __init__(self, args):
         super().__init__(aggr="add")
+        self.num_nodes = args.num_nodes # V
+        self.embed_dim = args.embed_dim # D
+        self.c_in = args.c_in # C_i
+        self.c_out = args.c_out # C_o
         self.activation = {
             "relu": nn.ReLU(), 
             "softplus": nn.Softplus(),
@@ -146,21 +153,35 @@ class MPGraphConv(MessagePassing):
             "prelu": nn.PReLU(), 
             "sigmoid": nn.Sigmoid()
         }[args.activation] if args.activation is not None else None
+        self.self_loops = args.self_loops
+        self.thresh = args.thresh
         self.normalization = args.normalization
+        if args.message_net is None:
+            self.message_net = None
+        elif args.message_net == "FC":
+            self.message_net = FullyConnectedNet(*args.message_net_args)
+        elif args.message_net == "TCN":
+            self.message_net = TCN(*args.message_net_args)
+        elif args.message_net == "SCINet":
+            self.message_net = StackedSCINet(*args.message_net_args)
+        self.update_func = nn.Linear(self.c_in + self.c_out, self.c_out)
 
     def calc_adj_mat(self, node_embeddings: torch.Tensor, list_repr: bool=True) -> torch.Tensor:
         """
         -------Arguments-------
         node_embeddings: (V, 2*D)
         --------Outputs--------
-        adj_mat: (V, V) OR
-        adj_list: (2, E)
+        adj_mat: (V, V)  if list_repr == False
+        adj_list, weights: (2, E), (E)  if list_repr == True
         """
-        embed_dim = node_embeddings.shape[1] // 2
-        assert node_embeddings.shape[1] % 2 == 0
-        adj_mat = node_embeddings[:, :embed_dim] @ node_embeddings[:, embed_dim:].T
+        assert self.embed_dim == node_embeddings.shape[1] / 2
+        adj_mat = node_embeddings[:, :self.embed_dim] @ node_embeddings[:, self.embed_dim:].T
         if self.activation is not None:
             adj_mat = self.activation(adj_mat)
+        if not self.self_loops:
+            adj_mat = adj_mat.fill_diagonal_(0) # Remove self loops
+        if self.thresh > 0:
+            adj_mat = torch.where(torch.abs(adj_mat) > 1, adj_mat, 0)
         if self.normalization == "spec": # Spectral (maximum singular value)
             adj_mat /= torch.linalg.matrix_norm(adj_mat, ord=2)
         elif self.normalization == "frob": # Frobenius
@@ -174,12 +195,35 @@ class MPGraphConv(MessagePassing):
             self, x: torch.Tensor, node_embeddings: torch.Tensor) -> torch.Tensor:
         """
         -------Arguments-------
-        x: (B, V, C_i)
+        x: (V, C_i)
         node_embeddings: (V, 2*D)
         --------Outputs--------
-        x_gconv: (B, V, C_o)
+        x_gconv: (V, C_o)
         """
-        adj_list = self.calc_adj_mat(node_embeddings) # ()
+        adj_list, adj_weight = self.calc_adj_mat(node_embeddings) # (2, E), (E)
+        return self.propagate(adj_list, x=x, adj_weight=adj_weight)
+
+    def message(self, x_j, adj_weight):
+        """
+        -------Arguments-------
+        x_j: (E, C_i)
+        --------Outputs--------
+        message_i: (E, C_o)
+        """
+        message_i = self.message_net(x_j) if self.message_net is not None else x_j
+        return message_i * adj_weight[:, None] # (E, C_o)
+
+    def update(self, aggr_out, x):
+        """
+        -------Arguments-------
+        aggr_out: (V, C_o)
+        x: (V, C_i)
+        --------Outputs--------
+        out: (V, C_o)
+        """
+        return self.update_func(torch.cat([x, aggr_out], dim=1))
+
+
 
 
 
