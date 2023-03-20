@@ -9,7 +9,7 @@ class TemporalBlock(nn.Module):
     def __init__(
             self, in_channels: int, out_channels: int,  kernel_size: int, dilation: int,
             padding_mode: str="zeros", dropout_prob: int=0.2):
-        super(TemporalBlock, self).__init__()
+        super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.kernel_size = kernel_size
@@ -59,7 +59,7 @@ class TCN(nn.Module):
             self, input_len: int, channels: list, kernel_size: int, 
             padding_mode: str="zeros", dropout_prob: int=0.2, 
             out_len: Union[None, int]=None):
-        super(TCN, self).__init__()
+        super().__init__()
         self.input_len = input_len # T
         self.channels = channels
         self.kernel_size = kernel_size

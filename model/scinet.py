@@ -17,7 +17,7 @@ class SubseqTransformation(nn.Module):
     def __init__(
             self, channels: int, channels_h: int, kernel_sizes: Tuple[int, int], 
             padding_mode: str="replicate", causal_conv: bool=True, dropout_prob: float=0.25):
-        super(SubseqTransformation, self).__init__()
+        super().__init__()
         if causal_conv:
             conv1 = ParallelCausalConv1d(
                 channels, channels_h, kernel_sizes[0], padding_mode=padding_mode)
@@ -53,7 +53,7 @@ class SCIBlock(nn.Module):
     def __init__(
             self, channels: int, channels_h: int, kernel_sizes: Tuple[int, int], 
             padding_mode: str="replicate", causal_conv: bool=True, dropout_prob: float=0.25):
-        super(SCIBlock, self).__init__()
+        super().__init__()
         subseq_trans_args = (channels, channels_h, kernel_sizes, padding_mode, causal_conv, dropout_prob)
         self.scale_trans_even = SubseqTransformation(*subseq_trans_args)
         self.scale_trans_odd = SubseqTransformation(*subseq_trans_args)
@@ -82,7 +82,7 @@ class LevelSCINet(nn.Module):
     def __init__(
             self, level: int, channels: int, channels_h: int, kernel_sizes: Tuple[int, int], 
             padding_mode: str="replicate", causal_conv: bool=True, dropout_prob: float=0.25):
-        super(LevelSCINet, self).__init__()
+        super().__init__()
         self.level = level
         self.blocks = [
             SCIBlock(channels, channels_h, kernel_sizes, padding_mode, causal_conv, dropout_prob) 
@@ -116,7 +116,7 @@ class SCINet(nn.Module):
             channels_h: list, out_shape: Union[int, Tuple], 
             kernel_sizes: Tuple[int, int], padding_mode: str="replicate", 
             causal_conv: bool=True, dropout_prob: float=0.25):
-        super(SCINet, self).__init__()
+        super().__init__()
         self.num_levels = num_levels # L
         self.in_channels = in_channels # C_i
         self.in_timesteps = in_timesteps # T_i
@@ -184,7 +184,7 @@ class StackedSCINet(nn.Module):
             channels_h: list, out_shape: Union[int, Tuple], kernel_sizes: Tuple[int, int], 
             padding_mode: str="replicate", causal_conv: bool=True, dropout_prob: float=0.25, 
             emb_dim: Union[int, None]=None):
-        super(StackedSCINet, self).__init__()
+        super().__init__()
         self.num_stacks = num_stacks
         self.emb_dim = emb_dim
         if emb_dim is None:

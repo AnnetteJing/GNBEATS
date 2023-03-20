@@ -1,19 +1,23 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch_geometric.nn import MessagePassing
+from torch_geometric.utils import add_self_loops, degree, dense_to_sparse
+from utils.util_functions import ComplexActivation
+
 
 ##################################################
 ## Undirected Graph Convolution
 ##################################################
 class UndirGraphConv(nn.Module):
     def __init__(self, args):
-        super(UndirGraphConv, self).__init__()
+        super().__init__()
         self.num_nodes = args.num_nodes # V
         self.embed_dim = args.embed_dim # D
         self.c_in = args.c_in # C_i
         self.c_out = args.c_out # C_o
         self.cheb_k = args.cheb_k # K. 1st order approx if K = 1
-        self.adj_mat_type = args.adj_mat_type
+        self.normalization = args.normalization
         self.weights_pool = nn.Parameter(
             torch.randn(self.embed_dim, self.cheb_k, self.c_in, self.c_out)) # (D, K, C_i, C_o)
         self.bias_pool = nn.Parameter(torch.randn(self.embed_dim, self.c_out))  # (D, C_o)
@@ -26,7 +30,7 @@ class UndirGraphConv(nn.Module):
         normalized_adj_mat: (V, V)
         """
         adj_mat = node_embeddings @ node_embeddings.T
-        if self.adj_mat_type == "Bai":
+        if self.normalization == "Bai":
             return F.softmax(F.relu(adj_mat), dim=0)
         else:
             adj_mat_rowsum = torch.sum(adj_mat, axis=1)[:, None]
@@ -60,11 +64,11 @@ class UndirGraphConv(nn.Module):
 
 
 ##################################################
-## Directed Graph Convolution
+## Directed Graph Convolution: Magnetic
 ##################################################
-class DirGraphConv(nn.Module):
+class MagGraphConv(nn.Module):
     def __init__(self, args):
-        super(DirGraphConv, self).__init__()
+        super().__init__()
         self.num_nodes = args.num_nodes # V
         self.embed_dim = args.embed_dim # D
         self.c_in = args.c_in # C_i
@@ -83,8 +87,8 @@ class DirGraphConv(nn.Module):
             self.bias_pool = nn.Parameter(torch.complex(
                 torch.randn(*bias_shape), torch.randn(*bias_shape)))
         self.activation = (
-            ComplexActivation(args.activation_type) if args.activation_type is not None else None)
-        self.norm_laplacian = args.norm_laplacian
+            ComplexActivation(args.activation) if args.activation is not None else None)
+        self.normalization = args.normalization
 
     def calc_laplacian(self, node_embeddings: torch.Tensor) -> torch.Tensor:
         """
@@ -96,9 +100,9 @@ class DirGraphConv(nn.Module):
         laplacian = node_embeddings @ node_embeddings.conj().T
         if self.activation is not None:
             laplacian = self.activation(laplacian)
-        if self.norm_laplacian == "spec": # Spectral (maximum singular value)
+        if self.normalization == "spec": # Spectral (maximum singular value)
             norm_factor = torch.linalg.matrix_norm(laplacian, ord=2)
-        elif self.norm_laplacian == "frob": # Frobenius
+        elif self.normalization == "frob": # Frobenius
             norm_factor = torch.linalg.matrix_norm(laplacian)
         return laplacian/norm_factor
     
@@ -128,35 +132,55 @@ class DirGraphConv(nn.Module):
 
 
 ##################################################
-## Complex Activation Functions
+## Directed Graph Convolution: Message Passing
 ##################################################
-class ComplexActivation(nn.Module):
-    """
-    method: One of "real", "real_imag", "arg_bdd", and "phase_amp"
-        real (Real):
-            1[z.real >= 0]*z
-            = ReLU(z.real) + i*1[z.real >= 0]*z.imag
-        real_imag (Real-imaginary):
-            ReLU(z.real) + i*ReLU(z.imag)
-        arg_bdd (Argument bound):
-            z if -pi/2 <= arg(z) < pi/2, 0 otherwise
-        phase_amp (Phase-amplitude):
-            tanh(|z|)*exp(i*arg(z))
-    """
-    def __init__(self, method: str="arg_bdd"):
-        super(ComplexActivation, self).__init__()
-        self.method = method
-    
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if self.method == "real":
-            return x*(x.real >= 0)
-        elif self.method == "real_imag":
-            return F.relu(x.real) + 1.j*F.relu(x.imag)
-        elif self.method == "arg_bdd":
-            return torch.where(
-                (-torch.pi/2 <= torch.angle(x)) & (torch.angle(x) < torch.pi/2), x, 0)
-        elif self.method == "phase_amp":
-            return torch.tanh(x.abs())*torch.exp(1.j*x.angle())
+class MPGraphConv(MessagePassing):
+    def __init__(self, args):
+        super().__init__(aggr="add")
+        self.activation = {
+            "relu": nn.ReLU(), 
+            "softplus": nn.Softplus(),
+            "tanh": nn.Tanh(), 
+            "selu": nn.SELU(), 
+            "lrelu": nn.LeakyReLU(), 
+            "prelu": nn.PReLU(), 
+            "sigmoid": nn.Sigmoid()
+        }[args.activation] if args.activation is not None else None
+        self.normalization = args.normalization
+
+    def calc_adj_mat(self, node_embeddings: torch.Tensor, list_repr: bool=True) -> torch.Tensor:
+        """
+        -------Arguments-------
+        node_embeddings: (V, 2*D)
+        --------Outputs--------
+        adj_mat: (V, V) OR
+        adj_list: (2, E)
+        """
+        embed_dim = node_embeddings.shape[1] // 2
+        assert node_embeddings.shape[1] % 2 == 0
+        adj_mat = node_embeddings[:, :embed_dim] @ node_embeddings[:, embed_dim:].T
+        if self.activation is not None:
+            adj_mat = self.activation(adj_mat)
+        if self.normalization == "spec": # Spectral (maximum singular value)
+            adj_mat /= torch.linalg.matrix_norm(adj_mat, ord=2)
+        elif self.normalization == "frob": # Frobenius
+            adj_mat /= torch.linalg.matrix_norm(adj_mat)
+        if list_repr:
+            return dense_to_sparse(adj_mat)
+        else:
+            return adj_mat
+        
+    def forward(
+            self, x: torch.Tensor, node_embeddings: torch.Tensor) -> torch.Tensor:
+        """
+        -------Arguments-------
+        x: (B, V, C_i)
+        node_embeddings: (V, 2*D)
+        --------Outputs--------
+        x_gconv: (B, V, C_o)
+        """
+        adj_list = self.calc_adj_mat(node_embeddings) # ()
+
 
 
 

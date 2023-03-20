@@ -7,12 +7,12 @@ from typing import Tuple, Union
 from .layers_temporal import ParallelConv1d, ParallelCausalConv1d, NodeDependentMod, FullyConnectedNet
 from .tcn import TCN
 from .scinet import StackedSCINet
-from .layers_graph import UndirGraphConv, DirGraphConv
+from .layers_graph import UndirGraphConv, MagGraphConv
 
 
 class Block(nn.Module):
     def __init__(self, args):
-        super(Block, self).__init__()
+        super().__init__()
         # Node dependent modification
         self.node_mod = NodeDependentMod() if args.node_mod else None
         # Theta network
@@ -42,7 +42,7 @@ class Block(nn.Module):
 ##################################################
 class IdentityComponent(nn.Module):
     def __init__(self, backcast_size: int, forecast_size: int):
-        super(IdentityComponent, self).__init__()
+        super().__init__()
         self.backcast_size = backcast_size # W
         self.forecast_size = forecast_size # H
 
@@ -65,7 +65,7 @@ class IdentityComponent(nn.Module):
 class TimeComponent(nn.Module):
     def __init__(
             self, backcast_size: int, forecast_size: int, deg: int, include_identity: bool):
-        super(TimeComponent, self).__init__()
+        super().__init__()
         self.sizes = (backcast_size, forecast_size) # (W, H)
         self.deg = deg
         self.include_identity = include_identity
@@ -100,7 +100,7 @@ class TimeComponent(nn.Module):
 
 class TrendComponent(TimeComponent):
     def __init__(self, backcast_size: int, forecast_size: int, deg: int, include_identity: bool=True):
-        super(TrendComponent, self).__init__(backcast_size, forecast_size, deg, include_identity)
+        super().__init__(backcast_size, forecast_size, deg, include_identity)
 
     def get_basis(self) -> torch.Tensor:
         return (
@@ -116,11 +116,11 @@ class SeasonalityComponent(TimeComponent):
     def __init__(
             self, backcast_size: int, forecast_size: int, 
             deg: Union[int, None]=None, include_identity: bool=True):
+        assert include_identity or (deg > 3), "Empty basis"
         if deg is None:  # N-BEATS default: deg = forecast_size
             deg = forecast_size
-        super(SeasonalityComponent, self).__init__(
+        super().__init__(
             backcast_size, forecast_size, deg, include_identity)
-        assert include_identity or (deg > 3), "Empty basis"
 
     def get_basis(self) -> torch.Tensor:
         deg_half = self.deg // 2
@@ -135,7 +135,9 @@ class SeasonalityComponent(TimeComponent):
             )
 
 
-
+##################################################
+## Basis Expansion: Graph
+##################################################
 
 
 

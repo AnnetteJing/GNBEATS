@@ -16,7 +16,7 @@ class NodeDependentMod(nn.Module):
     which facilitates parameter sharing in other layers
     """
     def __init__(self):
-        super(NodeDependentMod, self).__init__()
+        super().__init__()
     
     def forward(self, x: torch.Tensor, node_embeddings: torch.Tensor) -> torch.Tensor:
         """
@@ -40,7 +40,7 @@ class ParallelConv1d(nn.Module):
             self, in_channels: int, out_channels: int, kernel_size: int, 
             stride: int=1, dilation: int=1, 
             padding: Tuple[int, int]=(0, 0), padding_mode: str="zeros"):
-        super(ParallelConv1d, self).__init__()
+        super().__init__()
         self.in_channels = in_channels # C_i
         self.out_channels = out_channels # C_o
         self.kernel_size = kernel_size # Ker
@@ -82,7 +82,7 @@ class ParallelCausalConv1d(ParallelConv1d):
     def __init__(
             self, in_channels: int, out_channels: int, kernel_size: int, 
             stride: int=1, dilation: int=1, padding_mode: str="replicate"):
-        super(ParallelCausalConv1d, self).__init__(
+        super().__init__(
             in_channels, out_channels, kernel_size, stride, dilation, 
             padding=(dilation*(kernel_size - 1), 0), padding_mode=padding_mode)
         
@@ -109,7 +109,7 @@ class FullyConnectedNet(nn.Module):
     def __init__(
             self, dims: list, 
             activation: str="selu", batch_norm: bool=False, dropout_prob: float=0):
-        super(FullyConnectedNet, self).__init__()
+        super().__init__()
         self.dims = dims
         assert len(dims) >= 2, f"len(dims) = {len(dims)} < 2, missing input/output dim"
         self.activation = {
