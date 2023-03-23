@@ -1,6 +1,7 @@
+import math
 import torch
 import torch.nn as nn
-from torch.nn.utils import weight_norm
+# from torch.nn.utils import weight_norm
 from typing import Union, Tuple
 from .layers_temporal import ParallelConv1d, ParallelCausalConv1d
 
@@ -16,16 +17,12 @@ class TemporalBlock(nn.Module):
         self.dilation = dilation
         self.padding_mode = padding_mode
         self.dropout_prob = dropout_prob
-        conv1 = weight_norm(
-            ParallelCausalConv1d(
+        conv1 = ParallelCausalConv1d(
             in_channels, out_channels, kernel_size, 
-            dilation=dilation, padding_mode=padding_mode
-            ))
-        conv2 = weight_norm(
-            ParallelCausalConv1d(
+            dilation=dilation, padding_mode=padding_mode, param_norm="weight")
+        conv2 = ParallelCausalConv1d(
             out_channels, out_channels, kernel_size, 
-            dilation=dilation, padding_mode=padding_mode
-            ))
+            dilation=dilation, padding_mode=padding_mode, param_norm="weight")
         if dropout_prob > 0:
             self.layers = nn.Sequential(
                 conv1, nn.ReLU(), nn.Dropout(dropout_prob), 
@@ -56,38 +53,44 @@ class TemporalBlock(nn.Module):
 
 class TCN(nn.Module):
     def __init__(
-            self, input_len: int, channels: list, kernel_size: int, 
+            self, in_timesteps: int, channels: list, kernel_size: int, 
             padding_mode: str="zeros", dropout_prob: int=0.2, 
-            out_len: Union[None, int]=None):
+            out_shape: Union[None, int, Tuple]=None):
         super().__init__()
-        self.input_len = input_len # T
+        self.in_timesteps = in_timesteps # T
         self.channels = channels
         self.kernel_size = kernel_size
         self.padding_mode = padding_mode
         self.dropout_prob = dropout_prob
         layers = []
-        for i in range(len(channels)):
+        for i in range(len(channels) - 1):
             layers.append(TemporalBlock(
                 channels[i], channels[i + 1], kernel_size, 
                 dilation=2**i, padding_mode=padding_mode, dropout_prob=dropout_prob
             ))
         self.layers = nn.Sequential(*layers)
-        if out_len is not None:
-            self.out_layer = nn.Linear(channels[-1]*input_len, out_len)
+        if out_shape is not None:
+            self.out_shape = out_shape
+            self.out_layer = nn.Linear(channels[-1]*in_timesteps, math.prod(out_shape))
         else:
             self.out_layer = None
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         -------Arguments-------
-        x: (B, V, channels[0], T)
+        x: (B, V, channels[0], T) OR (B, V, channels[0]*T)
         --------Outputs--------
-        out: (B, V, channels[-1], T) OR (B, V, outlen)
+        out: (B, V, channels[-1], T) OR (B, V, out_shape)
         """
+        if len(x.shape) == 3:
+            x = x.reshape(x.shape[0], x.shape[1], -1, self.in_timesteps)
         out = self.layers(x)
         if self.out_layer is None:
             return out
         else:
-            return self.out_layer(out.flatten(2, 3))
+            out = self.out_layer(out.flatten(2, 3))
+            if not hasattr(self.out_shape, '__len__'):
+                out = out.reshape(*self.out_shape)
+            return out
     
     

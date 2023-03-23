@@ -1,3 +1,4 @@
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -139,11 +140,13 @@ class MagGraphConv(nn.Module):
 ##################################################
 class MPGraphConv(MessagePassing):
     def __init__(self, args):
-        super().__init__(aggr="add")
+        super().__init__(aggr="add", node_dim=1)
         self.num_nodes = args.num_nodes # V
         self.embed_dim = args.embed_dim # D
-        self.c_in = args.c_in # C_i
-        self.c_out = args.c_out # C_o
+        self.in_shape = args.in_shape # Can be a tuple
+        self.out_shape = args.out_shape # Can be a tuple
+        self.c_in = math.prod(args.in_shape) # C_i
+        self.c_out = math.prod(args.out_shape) # C_o
         self.activation = {
             "relu": nn.ReLU(), 
             "softplus": nn.Softplus(),
@@ -195,33 +198,36 @@ class MPGraphConv(MessagePassing):
             self, x: torch.Tensor, node_embeddings: torch.Tensor) -> torch.Tensor:
         """
         -------Arguments-------
-        x: (V, C_i)
+        x: (B, V, in_shape)
         node_embeddings: (V, 2*D)
         --------Outputs--------
-        x_gconv: (V, C_o)
+        x_gconv: (B, V, C_o)
         """
+        x = x.reshape(x.shape[0], x.shape[1], -1) # (B, V, C_i)
         adj_list, adj_weight = self.calc_adj_mat(node_embeddings) # (2, E), (E)
         return self.propagate(adj_list, x=x, adj_weight=adj_weight)
 
-    def message(self, x_j, adj_weight):
+    def message(self, x_j: torch.Tensor, adj_weight: torch.Tensor) -> torch.Tensor:
         """
         -------Arguments-------
-        x_j: (E, C_i)
+        x_j: (B, E, C_i)
         --------Outputs--------
-        message_i: (E, C_o)
+        message_i: (B, E, C_o)
         """
-        message_i = self.message_net(x_j) # (E, C_o)
-        return message_i * adj_weight[:, None] # (E, C_o)
+        message_i = self.message_net(x_j) # (B, E, C_o)
+        return message_i * adj_weight[:, None] # (B, E, C_o)
 
-    def update(self, aggr_out, x):
+    def update(self, aggr_out: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
         """
         -------Arguments-------
-        aggr_out: (V, C_o)
-        x: (V, C_i)
+        aggr_out: (B, V, in_shape)
+        x: (B, V, C_i)
         --------Outputs--------
-        out: (V, C_o)
+        out: (B, V, out_shape)
         """
-        return self.update_func(torch.cat([x, aggr_out], dim=1))
+        x = x.reshape(x.shape[0], x.shape[1], -1) # (B, V, C_i)
+        out = self.update_func(torch.cat([x, aggr_out], dim=-1))
+        return out.reshape(out.shape[0], out.shape[1], *self.out_shape)
 
 
 

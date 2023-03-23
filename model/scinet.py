@@ -178,6 +178,7 @@ class StackedSCINet(nn.Module):
     in_channels: Input channels; C_i
     in_timesteps: Input timesteps; T_i
     channels_h: Hidden channels for each layer in each stack
+        If list, must satisfy len(channels_h) == num_levels
     out_shape: Output shape of the final stack
     """
     def __init__(
@@ -212,19 +213,16 @@ class StackedSCINet(nn.Module):
             ) -> torch.Tensor:
         """
         -------Arguments-------
-        x: (B, V, C_i, T_i)
+        x: (B, V, C_i, T_i) OR (B, V, C_i*T_i)
         --------Outputs--------
         out: (B, V, *out_shape)
         """
-        dim2_input = (len(x.shape) == 2)
-        if dim2_input:
-            x = x.reshape(-1, 1, self.in_channels, self.in_timesteps)
+        if len(x.shape) == 3:
+            x = x.reshape(x.shape[0], x.shape[1], self.in_channels, self.in_timesteps)
         for s, scinet in enumerate(self.scinets):
             x = scinet(x)
             if node_embeddings is not None and s < self.num_stacks - 1:
                 x = self.node_mod(x, node_embeddings)
-        if dim2_input:
-            x = x.reshape(-1, self.out_shape)
         return x
         
 
