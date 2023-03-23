@@ -124,14 +124,14 @@ class FullyConnectedNet(nn.Module):
         self.batch_norm = batch_norm
         self.dropout_prob = dropout_prob
         layers = []
-        for i in range(len(dims) - 1):
+        for i in range(len(dims) - 2):
             layers.append(nn.Linear(dims[i], dims[i + 1]))
             layers.append(self.activation)
             if batch_norm:
                 layers.append(nn.BatchNorm1d(dims[i + 1]))
             if dropout_prob > 0:
                 layers.append(nn.Dropout(dropout_prob))
-        layers.append(layers.append(nn.Linear(dims[-2], dims[-1]))) # output layer
+        layers.append(nn.Linear(dims[-2], dims[-1])) # output layer
         self.layers = nn.Sequential(*layers)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

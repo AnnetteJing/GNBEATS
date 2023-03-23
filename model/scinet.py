@@ -113,7 +113,7 @@ class SCINet(nn.Module):
     """
     def __init__(
             self, num_levels: int, in_channels: int, in_timesteps: int, 
-            channels_h: list, out_shape: Union[int, Tuple], 
+            channels_h: Union[int, list], out_shape: Union[int, Tuple], 
             kernel_sizes: Tuple[int, int], padding_mode: str="replicate", 
             causal_conv: bool=True, dropout_prob: float=0.25):
         super().__init__()
@@ -121,7 +121,8 @@ class SCINet(nn.Module):
         self.in_channels = in_channels # C_i
         self.in_timesteps = in_timesteps # T_i
         self.out_shape = out_shape
-        self.channels_h = channels_h # [C_{h1}, ..., C_{hL}]
+        if not hasattr(channels_h, '__len__'): # [C_{h1}, ..., C_{hL}]
+            channels_h = [channels_h]*num_levels
         assert len(channels_h) == num_levels, "Hidden channel & level mismatch"
         self.kernel_sizes = kernel_sizes # (Ker_1, Ker_2)
         self.padding_mode = padding_mode
@@ -181,11 +182,14 @@ class StackedSCINet(nn.Module):
     """
     def __init__(
             self, num_stacks: int, num_levels: int, in_channels: int, in_timesteps: int, 
-            channels_h: list, out_shape: Union[int, Tuple], kernel_sizes: Tuple[int, int], 
+            out_shape: Union[int, Tuple], channels_h: Union[int, list], kernel_sizes: Tuple[int, int], 
             padding_mode: str="replicate", causal_conv: bool=True, dropout_prob: float=0.25, 
             emb_dim: Union[int, None]=None):
         super().__init__()
         self.num_stacks = num_stacks
+        self.in_channels = in_channels
+        self.in_timesteps = in_timesteps
+        self.out_shape = out_shape
         self.emb_dim = emb_dim
         if emb_dim is None:
             intermed_shape = (in_channels, in_timesteps)
@@ -212,10 +216,15 @@ class StackedSCINet(nn.Module):
         --------Outputs--------
         out: (B, V, *out_shape)
         """
+        dim2_input = (len(x.shape) == 2)
+        if dim2_input:
+            x = x.reshape(-1, 1, self.in_channels, self.in_timesteps)
         for s, scinet in enumerate(self.scinets):
             x = scinet(x)
             if node_embeddings is not None and s < self.num_stacks - 1:
                 x = self.node_mod(x, node_embeddings)
+        if dim2_input:
+            x = x.reshape(-1, self.out_shape)
         return x
         
 

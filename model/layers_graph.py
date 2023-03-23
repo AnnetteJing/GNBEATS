@@ -157,13 +157,13 @@ class MPGraphConv(MessagePassing):
         self.thresh = args.thresh
         self.normalization = args.normalization
         if args.message_net is None:
-            self.message_net = None
+            self.message_net = nn.Linear(self.c_in, self.c_out)
         elif args.message_net == "FC":
-            self.message_net = FullyConnectedNet(*args.message_net_args)
+            self.message_net = FullyConnectedNet(**args.message_net_args)
         elif args.message_net == "TCN":
-            self.message_net = TCN(*args.message_net_args)
+            self.message_net = TCN(**args.message_net_args)
         elif args.message_net == "SCINet":
-            self.message_net = StackedSCINet(*args.message_net_args)
+            self.message_net = StackedSCINet(**args.message_net_args)
         self.update_func = nn.Linear(self.c_in + self.c_out, self.c_out)
 
     def calc_adj_mat(self, node_embeddings: torch.Tensor, list_repr: bool=True) -> torch.Tensor:
@@ -210,7 +210,7 @@ class MPGraphConv(MessagePassing):
         --------Outputs--------
         message_i: (E, C_o)
         """
-        message_i = self.message_net(x_j) if self.message_net is not None else x_j
+        message_i = self.message_net(x_j) # (E, C_o)
         return message_i * adj_weight[:, None] # (E, C_o)
 
     def update(self, aggr_out, x):
