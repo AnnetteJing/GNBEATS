@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import MessagePassing
 from torch_geometric.utils import add_self_loops, degree, dense_to_sparse
+from typing import Tuple, Union, Dict
 from .. utils.util_functions import ComplexActivation
 from .layers_temporal import FullyConnectedNet
 from .tcn import TCN
@@ -139,15 +140,38 @@ class MagGraphConv(nn.Module):
 ## Directed Graph Convolution: Message Passing
 ##################################################
 class MPGraphConv(MessagePassing):
-    def __init__(self, args):
+    """
+    A Directed Graph Convolution based on Message Passing
+    x_u^{k+1} = UPDATE^k(h_u^k, AGGREGATE^k({h_v^k | v \in N(u)}))
+              = UPDATE^k(h_u^k, Message_u^k)
+    ----------------------
+    in_shape: Inputs should have shape (B, V, in_shape), where B=batch size, V=#nodes
+    out_shape: Outputs should have shape (B, V, out_shape)
+    embed_dim: Embedded dimension D, node embeddings have shape (V, 2*D)
+    adj_mat_activation: Activation for calculating the adjacency matrix from node embeddings
+    update_activation: Activation for the UPDATE function
+    self_loops: Whether to include "u" in "N(u)" in the AGGREGATE function
+    thresh: Set all entries of the adjacency matrix below thresh to 0
+    normalization: Method to normalize the adjacency matrix
+    message_net: Function type of AGGREGATE
+    kwargs: Dictionary including the following arguments, where (val) means optional with default value "val" 
+        - message_net="FC": hidden_dims, activation ("selu"), batch_norm (False), dropout_prob (0)
+        - message_net="TCN": hidden_channels, kernel_size, padding_mode ("zeros"), dropout_prob (0.2)
+        - message_net="SCINet": hidden_channels, kernel_sizes, num_stacks (2), num_levels (3), 
+            padding_mode ("replicate"), causal_conv (True), dropout_prob (0.25)
+    """
+    def __init__(
+            self, in_shape: int, out_shape: int, embed_dim: int, 
+            adj_mat_activation: Union[str, None], update_activation: Union[str, None], 
+            self_loops: bool, thresh: float, normalization: Union[str, None], 
+            message_net: Union[str, None], **kwargs):
         super().__init__(aggr="add", node_dim=1)
-        self.num_nodes = args.num_nodes # V
-        self.embed_dim = args.embed_dim # D
-        self.in_shape = args.in_shape # Can be a tuple
-        self.out_shape = args.out_shape # Can be a tuple
-        self.c_in = math.prod(args.in_shape) # C_i
-        self.c_out = math.prod(args.out_shape) # C_o
-        self.activation = {
+        self.in_shape = in_shape # Can be a tuple
+        self.out_shape = out_shape # Can be a tuple
+        self.embed_dim = embed_dim # D
+        self.c_in = math.prod(in_shape) # C_i
+        self.c_out = math.prod(out_shape) # C_o
+        activations = {
             "relu": nn.ReLU(), 
             "softplus": nn.Softplus(),
             "tanh": nn.Tanh(), 
@@ -155,18 +179,22 @@ class MPGraphConv(MessagePassing):
             "lrelu": nn.LeakyReLU(), 
             "prelu": nn.PReLU(), 
             "sigmoid": nn.Sigmoid()
-        }[args.activation] if args.activation is not None else None
-        self.self_loops = args.self_loops
-        self.thresh = args.thresh
-        self.normalization = args.normalization
-        if args.message_net is None:
+        }
+        self.adj_mat_activation = (
+            activations[adj_mat_activation] if adj_mat_activation is not None else None)
+        self.update_activation = (
+            activations[update_activation] if update_activation is not None else None)
+        self.self_loops = self_loops
+        self.thresh = thresh
+        self.normalization = normalization
+        if message_net is None:
             self.message_net = nn.Linear(self.c_in, self.c_out)
-        elif args.message_net == "FC":
-            self.message_net = FullyConnectedNet(**args.message_net_args)
-        elif args.message_net == "TCN":
-            self.message_net = TCN(**args.message_net_args)
-        elif args.message_net == "SCINet":
-            self.message_net = StackedSCINet(**args.message_net_args)
+        elif message_net == "FC":
+            self.message_net = FullyConnectedNet(**kwargs)
+        elif message_net == "TCN":
+            self.message_net = TCN(**kwargs)
+        elif message_net == "SCINet":
+            self.message_net = StackedSCINet(**kwargs)
         self.update_func = nn.Linear(self.c_in + self.c_out, self.c_out)
 
     def calc_adj_mat(self, node_embeddings: torch.Tensor, list_repr: bool=True) -> torch.Tensor:
@@ -179,12 +207,12 @@ class MPGraphConv(MessagePassing):
         """
         assert self.embed_dim == node_embeddings.shape[1] / 2
         adj_mat = node_embeddings[:, :self.embed_dim] @ node_embeddings[:, self.embed_dim:].T
-        if self.activation is not None:
-            adj_mat = self.activation(adj_mat)
+        if self.adj_mat_activation is not None:
+            adj_mat = self.adj_mat_activation(adj_mat)
         if not self.self_loops:
             adj_mat = adj_mat.fill_diagonal_(0) # Remove self loops
         if self.thresh > 0:
-            adj_mat = torch.where(torch.abs(adj_mat) > 1, adj_mat, 0)
+            adj_mat = torch.where(torch.abs(adj_mat) > self.thresh, adj_mat, 0)
         if self.normalization == "spec": # Spectral (maximum singular value)
             adj_mat /= torch.linalg.matrix_norm(adj_mat, ord=2)
         elif self.normalization == "frob": # Frobenius
@@ -227,7 +255,11 @@ class MPGraphConv(MessagePassing):
         """
         x = x.reshape(x.shape[0], x.shape[1], -1) # (B, V, C_i)
         out = self.update_func(torch.cat([x, aggr_out], dim=-1))
-        return out.reshape(out.shape[0], out.shape[1], *self.out_shape)
+        out = out.reshape(out.shape[0], out.shape[1], *self.out_shape)
+        if self.update_activation is None:
+            return out
+        else:
+            return self.update_activation(out)
 
 
 

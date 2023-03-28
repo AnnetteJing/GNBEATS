@@ -1,4 +1,4 @@
-import math
+import numpy as np
 import torch
 import torch.nn as nn
 # from torch.nn.utils import weight_norm
@@ -53,44 +53,44 @@ class TemporalBlock(nn.Module):
 
 class TCN(nn.Module):
     def __init__(
-            self, in_timesteps: int, channels: list, kernel_size: int, 
-            padding_mode: str="zeros", dropout_prob: int=0.2, 
-            out_shape: Union[None, int, Tuple]=None):
+            self, in_channels: int, in_timesteps: int, kernel_size: int, 
+            hidden_channels: Union[list, None]=None, padding_mode: str="zeros", 
+            dropout_prob: int=0.2, out_shape: Union[None, int, Tuple]=None):
         super().__init__()
         self.in_timesteps = in_timesteps # T
-        self.channels = channels
+        self.channels = [in_channels] # [C_i]
+        if hidden_channels is None:
+            self.channels += [in_channels] # [C_i, C_i]
+        else:
+            self.channels += hidden_channels  # [C_i, ...]
         self.kernel_size = kernel_size
         self.padding_mode = padding_mode
         self.dropout_prob = dropout_prob
         layers = []
-        for i in range(len(channels) - 1):
+        for i in range(len(self.channels) - 1):
             layers.append(TemporalBlock(
-                channels[i], channels[i + 1], kernel_size, 
+                self.channels[i], self.channels[i + 1], kernel_size, 
                 dilation=2**i, padding_mode=padding_mode, dropout_prob=dropout_prob
             ))
         self.layers = nn.Sequential(*layers)
+        self.out_shape = out_shape
         if out_shape is not None:
-            self.out_shape = out_shape
-            self.out_layer = nn.Linear(channels[-1]*in_timesteps, math.prod(out_shape))
-        else:
-            self.out_layer = None
+            self.out_layer = nn.Linear(self.channels[-1]*in_timesteps, np.prod(out_shape))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         -------Arguments-------
-        x: (B, V, channels[0], T) OR (B, V, channels[0]*T)
+        x: (B, V, C_i, T) OR (B, V, C_i*T)
         --------Outputs--------
-        out: (B, V, channels[-1], T) OR (B, V, out_shape)
+        out: (B, V, hidden_channels[-1], T) OR (B, V, out_shape)
         """
         if len(x.shape) == 3:
-            x = x.reshape(x.shape[0], x.shape[1], -1, self.in_timesteps)
-        out = self.layers(x)
-        if self.out_layer is None:
-            return out
-        else:
-            out = self.out_layer(out.flatten(2, 3))
-            if not hasattr(self.out_shape, '__len__'):
-                out = out.reshape(*self.out_shape)
-            return out
+            x = x.reshape(x.shape[0], x.shape[1], self.channels[0], self.in_timesteps)
+        out = self.layers(x) # (B, V, channels[-1], T)
+        if self.out_shape is not None:
+            out = self.out_layer(out.flatten(2, 3)) # (B, V, prod(out_shape))
+            if hasattr(self.out_shape, '__len__'):
+                out = out.reshape(x.shape[0], x.shape[1], *self.out_shape) # (B, V, out_shape)
+        return out
     
     

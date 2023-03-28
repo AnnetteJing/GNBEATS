@@ -105,7 +105,7 @@ class ParallelCausalConv1d(ParallelConv1d):
 
 
 ##################################################
-## Fully Connected Network (N-BEATS originial)
+## Fully Connected Network
 ##################################################
 class FullyConnectedNet(nn.Module):
     """
@@ -114,11 +114,13 @@ class FullyConnectedNet(nn.Module):
     dims: Input, hidden, and output dimensions
     """
     def __init__(
-            self, dims: list, 
-            activation: str="selu", batch_norm: bool=False, dropout_prob: float=0):
+            self, in_shape: Union[Tuple[int], int], out_shape: Union[Tuple[int], int], 
+            hidden_dims: Union[Tuple, list, None], activation: str="selu", 
+            batch_norm: bool=False, dropout_prob: float=0):
         super().__init__()
-        self.dims = dims
-        assert len(dims) >= 2, f"len(dims) = {len(dims)} < 2, missing input/output dim"
+        self.in_shape = in_shape
+        self.out_shape = out_shape
+        self.hidden_dims = hidden_dims
         self.activation = {
             "relu": nn.ReLU(), 
             "softplus": nn.Softplus(),
@@ -130,25 +132,31 @@ class FullyConnectedNet(nn.Module):
         }[activation]
         self.batch_norm = batch_norm
         self.dropout_prob = dropout_prob
-        layers = []
-        for i in range(len(dims) - 2):
-            layers.append(nn.Linear(dims[i], dims[i + 1]))
-            layers.append(self.activation)
-            if batch_norm:
-                layers.append(nn.BatchNorm1d(dims[i + 1]))
-            if dropout_prob > 0:
-                layers.append(nn.Dropout(dropout_prob))
-        layers.append(nn.Linear(dims[-2], dims[-1])) # output layer
+        if hasattr(hidden_dims, '__len__') and len(hidden_dims) > 0:
+            layers = [nn.Linear(np.prod(in_shape), hidden_dims[0])]
+            num_hidden_layers = len(hidden_dims) - 1
+            for i in range(num_hidden_layers):
+                layers.append(nn.Linear(hidden_dims[i], hidden_dims[i + 1]))
+                if batch_norm:
+                    layers.append(nn.BatchNorm1d(hidden_dims[i + 1]))
+                if dropout_prob > 0:
+                    layers.append(nn.Dropout(dropout_prob))
+            layers.append(nn.Linear(hidden_dims[num_hidden_layers], np.prod(out_shape)))
+        else:
+            layers = [nn.Linear(np.prod(in_shape), np.prod(out_shape))]
         self.layers = nn.Sequential(*layers)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         -------Arguments-------
-        x: (B, V, dims[0])
+        x: (B, V, in_shape)
         --------Outputs--------
-        out: (B, V, dims[-1])
+        out: (B, V, out_shape)
         """
-        return self.layers(x)
+        out = self.layers(x.reshape(x.shape[0], x.shape[1], -1)) # (B, V, prod(out_shape))
+        if hasattr(self.out_shape, '__len__'):
+            out = out.reshape(x.shape[0], x.shape[1], *self.out_shape)
+        return out
 
 
 

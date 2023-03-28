@@ -1,44 +1,122 @@
-from turtle import forward
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Tuple, Union
+from typing import Tuple, Union, Dict
 from .layers_temporal import ParallelConv1d, ParallelCausalConv1d, NodeDependentMod, FullyConnectedNet
 from .tcn import TCN
 from .scinet import StackedSCINet
-from .layers_graph import UndirGraphConv, MagGraphConv
+from .layers_graph import UndirGraphConv, MagGraphConv, MPGraphConv
 
 
 class Block(nn.Module):
-    def __init__(self, args):
+    """
+    backcast_size: Length of backcasts, aka window, W
+    forecast_size: Length of forecasts, aka horizon, H
+    embed_dim: Embedded dimension D, node embeddings have shape (V, 2*D)
+    basis: One of "identity", "trend", and "season"
+    node_mod: Whether to modify the input by node embeddings in forward()
+    kwargs: Dictionary including the following arguments, where (val) means optional with default value "val" 
+        - basis="trend": deg, include_identity (True)
+        - basis="season": deg (None), include_identity (True)
+    """
+    def __init__(
+            self, backcast_size: int, forecast_size: int, embed_dim: int, basis: str, 
+            node_mod: bool=True, kwargs: Union[Dict, None]=None): 
+            # kwargs instead of **kwargs to enable pass by reference 
+            # (some elements will be popped before kwargs is being used in children classes)
         super().__init__()
-        # Node dependent modification
-        self.node_mod = NodeDependentMod() if args.node_mod else None
-        # Theta network
-        if args.theta_net == "FC":
-            self.theta_net = FullyConnectedNet(*args.theta_net_args)
-        elif args.theta_net == "TCN":
-            self.theta_net = TCN(*args.theta_net_args)
-        elif args.theta_net == "SCINet":
-            self.theta_net = StackedSCINet(*args.theta_net_args)
-
+        self.node_mod = node_mod
+        if node_mod:
+            self.in_shape = (2*embed_dim, backcast_size) # (2*D, W)
+            self.in_channels = 2*embed_dim # 2*D
+        else:
+            self.in_shape = backcast_size # W
+            self.in_channels = 1
+        # Basis type
+        if basis == "identity":
+            self.out_shape = backcast_size + forecast_size # W + H
+            self.basis = IdentityComponent(backcast_size, forecast_size)
+        else:
+            basis_args = {arg: kwargs.pop(arg) for arg in ("deg", "include_identity") if arg in kwargs}
+            poly_dim = basis_args["deg"]
+            if basis == "trend":
+                assert "deg" in basis_args
+                self.basis = TrendComponent(backcast_size, forecast_size, **basis_args)
+            elif basis == "season":
+                poly_dim -= 2 if poly_dim % 2 == 0 else 3
+                self.basis = SeasonalityComponent(backcast_size, forecast_size, **basis_args)
+            if "include_identity" not in basis_args or basis_args["include_identity"]:
+                poly_dim += 1
+            self.out_shape = 2*poly_dim # 2*P
+            
     def forward(
-            self, x:torch.Tensor, node_embeddings: torch.Tensor
+            self, x:torch.Tensor, node_embeddings: Union[torch.Tensor, None]=None
             ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         -------Arguments-------
         x: (B, V, W)
-        node_embeddings: (V, D)
+        node_embeddings: (V, 2*D)
         --------Outputs--------
         backcast: (B, V, W)
         forecast: (B, V, H)
         """
-        theta = self.theta_net(x) # (B, V)
+        if self.node_mod:
+            assert node_embeddings is not None and node_embeddings.shape == (x.shape[1], self.in_channels)
+            x = torch.einsum("bvt,vd->bvdt", x, node_embeddings) # (B, V, 2*D, W)
+        theta = self.theta_net(x) # (B, V, W + H)
+        return self.basis(theta) # (B, V, W), (B, V, H)
+
+
+class AutoregressiveBlock(Block):
+    """
+    theta_net: One of "FC", "TCN", and "SCINet"
+    kwargs: Dictionary including the following arguments, where (val) means optional with default value "val" 
+        - basis="trend"/"season": deg, include_identity as in "Block"
+        - theta_net="FC": hidden_dims, activation ("selu"), batch_norm (False), dropout_prob (0)
+        - theta_net="TCN": kernel_size, hidden_channels (None), padding_mode ("zeros"), dropout_prob (0.2)
+        - theta_net="SCINet": hidden_channels, kernel_sizes, num_stacks (2), num_levels (3), 
+            padding_mode ("replicate"), causal_conv (True), dropout_prob (0.25)
+    """
+    def __init__(
+            self, backcast_size: int, forecast_size: int, embed_dim: int, 
+            basis: str, theta_net: str, node_mod: bool=True, **kwargs):
+        super().__init__(backcast_size, forecast_size, embed_dim, basis, node_mod, kwargs)
+        if theta_net == "FC": # N-BEATS originial
+            self.theta_net = FullyConnectedNet(self.in_shape, self.out_shape, **kwargs)
+        elif theta_net == "TCN":
+            self.theta_net = TCN(
+                self.in_channels, backcast_size, out_shape=self.out_shape, **kwargs)
+        elif theta_net == "SCINet":
+            self.theta_net = StackedSCINet(
+                self.in_channels, backcast_size, out_shape=self.out_shape, **kwargs)
+
+
+class GraphBlock(Block):
+    """
+    theta_net: One of "FC", "TCN", and "SCINet"
+    adj_mat_activation, update_activation, self_loops, thresh, normalization: 
+        Defined under MPGraphConv in layers_graph.py
+    kwargs: Dictionary including the following arguments, where (val) means optional with default value "val" 
+        - basis="trend"/"season": deg, include_identity as in "Block"
+        - theta_net="FC": hidden_dims, activation ("selu"), batch_norm (False), dropout_prob (0)
+        - theta_net="TCN": kernel_size, hidden_channels (None), padding_mode ("zeros"), dropout_prob (0.2)
+        - theta_net="SCINet": hidden_channels, kernel_sizes, num_stacks (2), num_levels (3), 
+            padding_mode ("replicate"), causal_conv (True), dropout_prob (0.25)
+    """
+    def __init__(
+            self, backcast_size: int, forecast_size: int, embed_dim: int, 
+            basis: str, theta_net: str, node_mod: bool, 
+            adj_mat_activation: Union[str, None], update_activation: Union[str, None], 
+            self_loops: bool, thresh: float, normalization: Union[str, None], **kwargs):
+        super().__init__(backcast_size, forecast_size, embed_dim, basis, node_mod, kwargs)
+        self.theta_net = MPGraphConv(
+            self.in_shape, self.out_shape, embed_dim, adj_mat_activation, update_activation, 
+            self_loops, thresh, normalization, theta_net, **kwargs)
 
 
 ##################################################
-## Basis Expansion: Identity (AR)
+## Basis Expansion: Identity
 ##################################################
 class IdentityComponent(nn.Module):
     def __init__(self, backcast_size: int, forecast_size: int):
@@ -83,8 +161,8 @@ class TimeComponent(nn.Module):
             P = deg + 1  if include_identity 
                 deg      else
             - Seasonality
-            P = H - 1 (even) / H - 2 (odd)  if include_identity
-                H - 2 (even) / H - 3 (odd)  else
+            P = deg - 1 (even) / deg - 2 (odd)  if include_identity
+                deg - 2 (even) / deg - 3 (odd)  else
         self.backcast_basis: (P, W)
         self.forecast_basis: (P, H)
         --------Outputs--------
@@ -116,9 +194,9 @@ class SeasonalityComponent(TimeComponent):
     def __init__(
             self, backcast_size: int, forecast_size: int, 
             deg: Union[int, None]=None, include_identity: bool=True):
-        assert include_identity or (deg > 3), "Empty basis"
         if deg is None:  # N-BEATS default: deg = forecast_size
             deg = forecast_size
+        assert include_identity or (deg > 3), "Empty basis"
         super().__init__(
             backcast_size, forecast_size, deg, include_identity)
 
@@ -135,9 +213,6 @@ class SeasonalityComponent(TimeComponent):
             )
 
 
-##################################################
-## Basis Expansion: Graph
-##################################################
 
 
 
