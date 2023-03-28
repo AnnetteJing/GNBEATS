@@ -1,4 +1,4 @@
-import math
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -148,12 +148,12 @@ class MPGraphConv(MessagePassing):
     in_shape: Inputs should have shape (B, V, in_shape), where B=batch size, V=#nodes
     out_shape: Outputs should have shape (B, V, out_shape)
     embed_dim: Embedded dimension D, node embeddings have shape (V, 2*D)
+    message_net: Function type of AGGREGATE
     adj_mat_activation: Activation for calculating the adjacency matrix from node embeddings
     update_activation: Activation for the UPDATE function
     self_loops: Whether to include "u" in "N(u)" in the AGGREGATE function
     thresh: Set all entries of the adjacency matrix below thresh to 0
     normalization: Method to normalize the adjacency matrix
-    message_net: Function type of AGGREGATE
     kwargs: Dictionary including the following arguments, where (val) means optional with default value "val" 
         - message_net="FC": hidden_dims, activation ("selu"), batch_norm (False), dropout_prob (0)
         - message_net="TCN": hidden_channels, kernel_size, padding_mode ("zeros"), dropout_prob (0.2)
@@ -161,16 +161,16 @@ class MPGraphConv(MessagePassing):
             padding_mode ("replicate"), causal_conv (True), dropout_prob (0.25)
     """
     def __init__(
-            self, in_shape: int, out_shape: int, embed_dim: int, 
-            adj_mat_activation: Union[str, None], update_activation: Union[str, None], 
-            self_loops: bool, thresh: float, normalization: Union[str, None], 
-            message_net: Union[str, None], **kwargs):
+            self, in_shape: Union[int, Tuple], out_shape: Union[int, Tuple], 
+            embed_dim: int, message_net: Union[str, None], 
+            adj_mat_activation: Union[str, None]="tanh", update_activation: Union[str, None]=None, 
+            self_loops: bool=False, thresh: float=0.2, normalization: Union[str, None]="frob", **kwargs):
         super().__init__(aggr="add", node_dim=1)
         self.in_shape = in_shape # Can be a tuple
         self.out_shape = out_shape # Can be a tuple
         self.embed_dim = embed_dim # D
-        self.c_in = math.prod(in_shape) # C_i
-        self.c_out = math.prod(out_shape) # C_o
+        self.c_in = np.prod(in_shape) # C_i
+        self.c_out = np.prod(out_shape) # C_o
         activations = {
             "relu": nn.ReLU(), 
             "softplus": nn.Softplus(),
@@ -181,20 +181,23 @@ class MPGraphConv(MessagePassing):
             "sigmoid": nn.Sigmoid()
         }
         self.adj_mat_activation = (
-            activations[adj_mat_activation] if adj_mat_activation is not None else None)
+            None if not adj_mat_activation else activations[adj_mat_activation])
         self.update_activation = (
-            activations[update_activation] if update_activation is not None else None)
+            None if not update_activation else activations[update_activation])
         self.self_loops = self_loops
         self.thresh = thresh
         self.normalization = normalization
-        if message_net is None:
+        if not message_net:
             self.message_net = nn.Linear(self.c_in, self.c_out)
         elif message_net == "FC":
-            self.message_net = FullyConnectedNet(**kwargs)
+            self.message_net = FullyConnectedNet(
+                in_shape=self.c_in, out_shape=self.c_out, **kwargs)
         elif message_net == "TCN":
-            self.message_net = TCN(**kwargs)
+            self.message_net = TCN(
+                in_channels=1, in_timesteps=self.c_in, out_shape=self.out_shape, **kwargs)
         elif message_net == "SCINet":
-            self.message_net = StackedSCINet(**kwargs)
+            self.message_net = StackedSCINet(
+                in_channels=1, in_timesteps=self.c_in, out_shape=self.out_shape, **kwargs)
         self.update_func = nn.Linear(self.c_in + self.c_out, self.c_out)
 
     def calc_adj_mat(self, node_embeddings: torch.Tensor, list_repr: bool=True) -> torch.Tensor:
@@ -255,7 +258,8 @@ class MPGraphConv(MessagePassing):
         """
         x = x.reshape(x.shape[0], x.shape[1], -1) # (B, V, C_i)
         out = self.update_func(torch.cat([x, aggr_out], dim=-1))
-        out = out.reshape(out.shape[0], out.shape[1], *self.out_shape)
+        if hasattr(self.out_shape, '__len__'):
+            out = out.reshape(out.shape[0], out.shape[1], *self.out_shape)
         if self.update_activation is None:
             return out
         else:

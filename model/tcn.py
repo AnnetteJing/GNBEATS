@@ -59,7 +59,7 @@ class TCN(nn.Module):
         super().__init__()
         self.in_timesteps = in_timesteps # T
         self.channels = [in_channels] # [C_i]
-        if hidden_channels is None:
+        if not hidden_channels:
             self.channels += [in_channels] # [C_i, C_i]
         else:
             self.channels += hidden_channels  # [C_i, ...]

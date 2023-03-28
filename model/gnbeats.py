@@ -49,23 +49,6 @@ class Block(nn.Module):
             if "include_identity" not in basis_args or basis_args["include_identity"]:
                 poly_dim += 1
             self.out_shape = 2*poly_dim # 2*P
-            
-    def forward(
-            self, x:torch.Tensor, node_embeddings: Union[torch.Tensor, None]=None
-            ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        -------Arguments-------
-        x: (B, V, W)
-        node_embeddings: (V, 2*D)
-        --------Outputs--------
-        backcast: (B, V, W)
-        forecast: (B, V, H)
-        """
-        if self.node_mod:
-            assert node_embeddings is not None and node_embeddings.shape == (x.shape[1], self.in_channels)
-            x = torch.einsum("bvt,vd->bvdt", x, node_embeddings) # (B, V, 2*D, W)
-        theta = self.theta_net(x) # (B, V, W + H)
-        return self.basis(theta) # (B, V, W), (B, V, H)
 
 
 class AutoregressiveBlock(Block):
@@ -90,6 +73,23 @@ class AutoregressiveBlock(Block):
         elif theta_net == "SCINet":
             self.theta_net = StackedSCINet(
                 self.in_channels, backcast_size, out_shape=self.out_shape, **kwargs)
+    
+    def forward(
+            self, x:torch.Tensor, node_embeddings: Union[torch.Tensor, None]=None
+            ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        -------Arguments-------
+        x: (B, V, W)
+        node_embeddings: (V, 2*D)
+        --------Outputs--------
+        backcast: (B, V, W)
+        forecast: (B, V, H)
+        """
+        if self.node_mod:
+            assert node_embeddings is not None and node_embeddings.shape == (x.shape[1], self.in_channels)
+            x = torch.einsum("bvt,vd->bvdt", x, node_embeddings) # (B, V, 2*D, W)
+        theta = self.theta_net(x) # (B, V, W + H)
+        return self.basis(theta) # (B, V, W), (B, V, H)
 
 
 class GraphBlock(Block):
@@ -106,13 +106,29 @@ class GraphBlock(Block):
     """
     def __init__(
             self, backcast_size: int, forecast_size: int, embed_dim: int, 
-            basis: str, theta_net: str, node_mod: bool, 
-            adj_mat_activation: Union[str, None], update_activation: Union[str, None], 
-            self_loops: bool, thresh: float, normalization: Union[str, None], **kwargs):
+            basis: str, theta_net: str, node_mod: bool=True, 
+            adj_mat_activation: Union[str, None]="tanh", update_activation: Union[str, None]=None, 
+            self_loops: bool=False, thresh: float=0.2, normalization: Union[str, None]="frob", **kwargs):
         super().__init__(backcast_size, forecast_size, embed_dim, basis, node_mod, kwargs)
         self.theta_net = MPGraphConv(
-            self.in_shape, self.out_shape, embed_dim, adj_mat_activation, update_activation, 
-            self_loops, thresh, normalization, theta_net, **kwargs)
+            self.in_shape, self.out_shape, embed_dim, theta_net, adj_mat_activation, update_activation, 
+            self_loops, thresh, normalization, **kwargs)
+        
+    def forward(
+            self, x:torch.Tensor, node_embeddings: Union[torch.Tensor, None]=None
+            ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        -------Arguments-------
+        x: (B, V, W)
+        node_embeddings: (V, 2*D)
+        --------Outputs--------
+        backcast: (B, V, W)
+        forecast: (B, V, H)
+        """
+        if self.node_mod:
+            x = torch.einsum("bvt,vd->bvdt", x, node_embeddings) # (B, V, 2*D, W)
+        theta = self.theta_net(x, node_embeddings) # (B, V, W + H)
+        return self.basis(theta) # (B, V, W), (B, V, H)
 
 
 ##################################################
@@ -194,7 +210,7 @@ class SeasonalityComponent(TimeComponent):
     def __init__(
             self, backcast_size: int, forecast_size: int, 
             deg: Union[int, None]=None, include_identity: bool=True):
-        if deg is None:  # N-BEATS default: deg = forecast_size
+        if not deg:  # N-BEATS default: deg = forecast_size
             deg = forecast_size
         assert include_identity or (deg > 3), "Empty basis"
         super().__init__(
