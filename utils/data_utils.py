@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import Dataset, DataLoader
+from typing import Optional, Union
 
 
 def load_data_npz(ds_folder: str, ds_name: str):
@@ -42,7 +43,8 @@ class Normalizer:
             return data * scale + min
 
 
-def split_data(data: np.array, train, valid, by_ratio=True):
+def split_data(
+        data: np.array, train: Union[int, float], valid: Union[int, float], by_ratio: bool=True):
     n = len(data)
     if by_ratio:
         lo, hi = int(n * train), int(n * (train + valid))
@@ -53,7 +55,9 @@ def split_data(data: np.array, train, valid, by_ratio=True):
     
 
 class TS_Forecast_Dataset(Dataset):
-    def __init__(self, df, window, horizon, interval=1, device=None, normalizer=None):
+    def __init__(
+            self, df: np.array, window: int, horizon: int, interval: int=1, 
+            device: Optional[str]=None, normalizer: Optional[str]=None):
         self.window = window # Size of lookback window (input = data[t-window:t])
         self.horizon = horizon # Size of forecast horizon (target = data[t:t+horizon])
         if normalizer is not None:
@@ -67,7 +71,7 @@ class TS_Forecast_Dataset(Dataset):
         range_t = range(self.window, len(self.df) - self.horizon + 1)
         self.idx_mid = [range_t[i * interval] for i in range(len(range_t) // interval)]
 
-    def __getitem__(self, index):
+    def __getitem__(self, index: int):
         mid = self.idx_mid[index]
         lo, hi = mid - self.window, mid + self.horizon
         inputs, targets = self.df[lo:mid], self.df[mid:hi]
@@ -80,11 +84,11 @@ class TS_Forecast_Dataset(Dataset):
 
 
 def get_loader_normalizer(
-        data, batch_size, window, horizon, 
-        train_interval, test_interval,
-        train_shuffle=True, normalization="z_score",
-        train=0.7, valid=0.2, by_ratio=True, device=None
-        ):
+        data: np.array, batch_size: int, window: int, horizon: int, 
+        train_interval: int, test_interval: int,
+        train_shuffle: bool=True, normalization: Optional[str]="z_score",
+        train: Union[int, float]=0.7, valid: Union[int, float]=0.2, 
+        by_ratio: bool=True, device: Optional[str]=None):
     df_train, df_valid, df_test = split_data(data, train, valid, by_ratio)
     normalizer = {
         "train": Normalizer(normalization), 

@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import MessagePassing
 from torch_geometric.utils import add_self_loops, degree, dense_to_sparse
-from typing import Tuple, Union, Dict
+from typing import Optional, Tuple, Union
 from .. utils.util_functions import ComplexActivation
 from .layers_temporal import FullyConnectedNet
 from .tcn import TCN
@@ -162,9 +162,9 @@ class MPGraphConv(MessagePassing):
     """
     def __init__(
             self, in_shape: Union[int, Tuple], out_shape: Union[int, Tuple], 
-            embed_dim: int, message_net: Union[str, None], 
-            adj_mat_activation: Union[str, None]="tanh", update_activation: Union[str, None]=None, 
-            self_loops: bool=False, thresh: float=0.2, normalization: Union[str, None]="frob", **kwargs):
+            embed_dim: int, message_net: Optional[str], 
+            adj_mat_activation: Optional[str]="tanh", update_activation: Optional[str]=None, 
+            self_loops: bool=False, thresh: float=0.2, normalization: Optional[str]="frob", **kwargs):
         super().__init__(aggr="add", node_dim=1)
         self.in_shape = in_shape # Can be a tuple
         self.out_shape = out_shape # Can be a tuple

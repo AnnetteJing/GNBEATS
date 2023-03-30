@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 # from torch.nn.utils import weight_norm
-from typing import Union, Tuple
+from typing import Optional, Union, Tuple
 from .layers_temporal import ParallelConv1d, ParallelCausalConv1d
 
 
@@ -54,7 +54,7 @@ class TemporalBlock(nn.Module):
 class TCN(nn.Module):
     def __init__(
             self, in_channels: int, in_timesteps: int, kernel_size: int, 
-            hidden_channels: Union[list, None]=None, padding_mode: str="zeros", 
+            hidden_channels: Optional[list]=None, padding_mode: str="zeros", 
             dropout_prob: int=0.2, out_shape: Union[None, int, Tuple]=None):
         super().__init__()
         self.in_timesteps = in_timesteps # T

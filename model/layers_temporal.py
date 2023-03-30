@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils import weight_norm, spectral_norm
 import torch.nn.init as init
-from typing import Tuple, Union
+from typing import Optional, Tuple, Union
 
 
 ##################################################
@@ -40,7 +40,7 @@ class ParallelConv1d(nn.Module):
             self, in_channels: int, out_channels: int, kernel_size: int, 
             stride: int=1, dilation: int=1, 
             padding: Tuple[int, int]=(0, 0), padding_mode: str="zeros", 
-            param_norm: Union[str, None]=None):
+            param_norm: Optional[str]=None):
         super().__init__()
         self.in_channels = in_channels # C_i
         self.out_channels = out_channels # C_o
@@ -87,7 +87,7 @@ class ParallelCausalConv1d(ParallelConv1d):
     def __init__(
             self, in_channels: int, out_channels: int, kernel_size: int, 
             stride: int=1, dilation: int=1, padding_mode: str="replicate",
-            param_norm: Union[str, None]=None):
+            param_norm: Optional[str]=None):
         super().__init__(
             in_channels, out_channels, kernel_size, stride, dilation, 
             padding=(dilation*(kernel_size - 1), 0), padding_mode=padding_mode, 
