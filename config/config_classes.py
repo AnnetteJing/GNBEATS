@@ -3,8 +3,8 @@ from dataclasses import dataclass
 
 @dataclass
 class ConfigFC:
-    in_shape: Union[Tuple[int], int]
-    out_shape: Union[Tuple[int], int]
+    # in_shape: Union[Tuple[int], int]
+    # out_shape: Union[Tuple[int], int]
     hidden_dims: Union[Tuple, list, None]
     activation: str = "selu"
     batch_norm: bool = False
@@ -12,19 +12,19 @@ class ConfigFC:
 
 @dataclass
 class ConfigTCN:
-    in_channels: int
-    in_timesteps: int
+    # in_channels: int
+    # in_timesteps: int
     kernel_size: int
     hidden_channels: Optional[list]=None
     padding_mode: str = "zeros"
     dropout_prob: int = 0.2
-    out_shape: Union[None, int, Tuple] = None
+    # out_shape: Union[None, int, Tuple] = None
 
 @dataclass
 class ConfigSCINet:
-    in_channels: int
-    in_timesteps: int
-    out_shape: Union[int, Tuple]
+    # in_channels: int
+    # in_timesteps: int
+    # out_shape: Union[int, Tuple]
     hidden_channels: Union[int, list]
     kernel_size: Tuple[int, int]
     num_stacks: int = 2

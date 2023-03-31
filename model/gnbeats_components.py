@@ -18,7 +18,7 @@ class DoubleResStack(nn.Module):
     block_grouping: Tensor of length L, with each element in {0, ..., G}
     """
     def __init__(
-            self, blocks: nn.ModuleList, block_grouping: Optional[torch.Tensor[int]]=None): 
+            self, blocks: nn.ModuleList, block_grouping: Optional[torch.Tensor]=None): 
         super().__init__()
         self.blocks = blocks # [block]*L
         self.block_grouping = block_grouping
