@@ -130,7 +130,7 @@ class SCINet(nn.Module):
         self.padding_mode = padding_mode
         self.causal_conv = causal_conv
         self.dropout_prob = dropout_prob
-        self.subseq_idx = self.get_subseq_idx([i for i in range(2**num_levels)], num_levels)
+        self.subseq_idx = self._get_subseq_idx([i for i in range(2**num_levels)], num_levels)
         self.levels = [
             LevelSCINet(
                 l, in_channels, hidden_channels[l], kernel_size, 
@@ -141,11 +141,11 @@ class SCINet(nn.Module):
         else:
             self.output_layer = nn.Linear(in_channels*in_timesteps, out_shape)
 
-    def get_subseq_idx(self, seq: list, level: int) -> list:
+    def _get_subseq_idx(self, seq: list, level: int) -> list:
         if level == 0:
             return seq
-        seq_even = self.get_subseq_idx(seq[::2], level - 1)
-        seq_odd = self.get_subseq_idx(seq[1::2], level - 1)
+        seq_even = self._get_subseq_idx(seq[::2], level - 1)
+        seq_odd = self._get_subseq_idx(seq[1::2], level - 1)
         return seq_even + seq_odd
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:

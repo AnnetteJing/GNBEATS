@@ -216,10 +216,12 @@ class MPGraphConv(MessagePassing):
             adj_mat = adj_mat.fill_diagonal_(0) # Remove self loops
         if self.thresh > 0:
             adj_mat = torch.where(torch.abs(adj_mat) > self.thresh, adj_mat, 0)
-        if self.normalization == "spec": # Spectral (maximum singular value)
-            adj_mat /= torch.linalg.matrix_norm(adj_mat, ord=2)
-        elif self.normalization == "frob": # Frobenius
-            adj_mat /= torch.linalg.matrix_norm(adj_mat)
+        if self.normalization:
+            if self.normalization == "spec": # Spectral (maximum singular value)
+                norm_factor = torch.linalg.matrix_norm(adj_mat, ord=2)
+            elif self.normalization == "frob": # Frobenius
+                norm_factor = torch.linalg.matrix_norm(adj_mat)
+            adj_mat = adj_mat / norm_factor
         if list_repr:
             return dense_to_sparse(adj_mat)
         else:

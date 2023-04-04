@@ -18,23 +18,23 @@ class DoubleResStack(nn.Module):
     block_grouping: Tensor of length L, with each element in {0, ..., G}
     """
     def __init__(
-            self, blocks: nn.ModuleList, block_grouping: Optional[torch.Tensor]=None): 
+            self, blocks: nn.ModuleList, node_embeddings: torch.Tensor,
+            block_grouping: Optional[torch.Tensor]=None): 
         super().__init__()
         self.blocks = blocks # [block]*L
         self.block_grouping = block_grouping
-        if block_grouping: # is not None
+        if block_grouping is not None:
             assert len(blocks) == len(block_grouping)
+        self.node_embeddings = nn.Parameter(node_embeddings, requires_grad=True)
 
     def forward(
-            self, x:torch.Tensor, node_embeddings: Optional[torch.Tensor]=None, 
-            return_decomposition: bool=False
+            self, x:torch.Tensor, return_decomposition: bool=False
             ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         -------Arguments-------
         x: (B, V, W)
-        node_embeddings: (V, 2*D)
-        return_decomposition: 
-            Whether to return partial sums of block forecasts based on block_grouping
+        self.node_embeddings: (V, 2*D)
+        return_decomposition: Returns partial sums of block forecasts based on block_grouping if True
         --------Outputs--------
         forecast: (B, V, H)
         decomposed_forecasts: (B, V, H, G), where G = Number of groupings
@@ -42,8 +42,8 @@ class DoubleResStack(nn.Module):
         residuals = x # (B, V, W)
         block_forecasts = []
         for block in self.blocks:
-            block_backcast, block_forecast = block(residuals, node_embeddings) # (B, V, W), (B, V, H)
-            residuals -= block_backcast # (B, V, W)
+            block_backcast, block_forecast = block(residuals, self.node_embeddings) # (B, V, W), (B, V, H)
+            residuals = residuals - block_backcast # (B, V, W)
             block_forecasts.append(block_forecast) # [(B, V, H)]*L
         block_forecasts = torch.stack(block_forecasts) # (B, V, H, L)
         if return_decomposition:
@@ -83,16 +83,17 @@ class Block(nn.Module):
             self.in_shape = backcast_size # W
             self.in_channels = 1
         # Basis type
+        basis_args = {arg: kwargs.pop(arg) for arg in ("deg", "include_identity") if arg in kwargs}
         if basis == "identity":
             self.out_shape = backcast_size + forecast_size # W + H
             self.basis = IdentityComponent(backcast_size, forecast_size)
         else:
-            basis_args = {arg: kwargs.pop(arg) for arg in ("deg", "include_identity") if arg in kwargs}
             poly_dim = basis_args["deg"]
             if basis == "trend":
                 assert "deg" in basis_args
                 self.basis = TrendComponent(backcast_size, forecast_size, **basis_args)
             elif basis == "season":
+                poly_dim = poly_dim if poly_dim else forecast_size
                 poly_dim -= 2 if poly_dim % 2 == 0 else 3
                 self.basis = SeasonalityComponent(backcast_size, forecast_size, **basis_args)
             if "include_identity" not in basis_args or basis_args["include_identity"]:
@@ -262,8 +263,7 @@ class SeasonalityComponent(TimeComponent):
     def __init__(
             self, backcast_size: int, forecast_size: int, 
             deg: Optional[int]=None, include_identity: bool=True):
-        if not deg:  # N-BEATS default: deg = forecast_size
-            deg = forecast_size
+        deg = deg if deg else forecast_size # N-BEATS default: deg = forecast_size
         assert include_identity or (deg > 3), "Empty basis"
         super().__init__(
             backcast_size, forecast_size, deg, include_identity)
