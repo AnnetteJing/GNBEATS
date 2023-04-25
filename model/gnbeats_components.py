@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch_scatter import scatter
 from typing import Tuple, Optional, Dict
 from .layers_temporal import FullyConnectedNet
@@ -19,13 +20,14 @@ class DoubleResStack(nn.Module):
     """
     def __init__(
             self, blocks: nn.ModuleList, node_embeddings: torch.Tensor,
-            block_grouping: Optional[torch.Tensor]=None): 
+            block_grouping: Optional[torch.Tensor]=None, dropout_prob: float=0.25): 
         super().__init__()
         self.blocks = blocks # [block]*L
         self.block_grouping = block_grouping
         if block_grouping is not None:
             assert len(blocks) == len(block_grouping)
         self.node_embeddings = nn.Parameter(node_embeddings, requires_grad=True)
+        self.dropout = nn.Dropout2d(dropout_prob) if dropout_prob > 0 else None
 
     def forward(
             self, x:torch.Tensor, return_decomposition: bool=False
@@ -45,14 +47,19 @@ class DoubleResStack(nn.Module):
             block_backcast, block_forecast = block(residuals, self.node_embeddings) # (B, V, W), (B, V, H)
             residuals = residuals - block_backcast # (B, V, W)
             block_forecasts.append(block_forecast) # [(B, V, H)]*L
-        block_forecasts = torch.stack(block_forecasts) # (B, V, H, L)
+        block_forecasts = torch.stack(block_forecasts, dim=-1) # (B, V, H, L)
+        if self.dropout: # Zero out some of the L block outputs
+            batch_size, num_nodes, horizon, num_blocks = block_forecasts.shape
+            block_forecasts = self.dropout(
+                block_forecasts.reshape(batch_size, num_nodes*horizon, num_blocks).permute(0, 2, 1)
+                ).permute(0, 2, 1).reshape(batch_size, num_nodes, horizon, num_blocks) # (B, V, H, L)
         if return_decomposition:
             assert self.block_grouping is not None
             decomposed_forecasts = scatter( # Default: reduce="sum"
                 block_forecasts, self.block_grouping, dim=-1) # (B, V, H, G)
-            return torch.sum(decomposed_forecasts), decomposed_forecasts # (B, V, H), (B, V, H, G)
+            return torch.sum(decomposed_forecasts, axis=-1), decomposed_forecasts # (B, V, H), (B, V, H, G)
         else:
-            return torch.sum(block_forecasts) # (B, V, H)
+            return torch.sum(block_forecasts, axis=-1) # (B, V, H)
 
 
 ##################################################

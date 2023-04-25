@@ -6,7 +6,7 @@ class ConfigFC:
     # in_shape: Union[Tuple[int], int]
     # out_shape: Union[Tuple[int], int]
     hidden_dims: Union[Tuple, list, None]
-    activation: str = "selu"
+    activation: str = "tanh"
     batch_norm: bool = False
     dropout_prob: float = 0
 

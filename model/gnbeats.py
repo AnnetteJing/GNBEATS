@@ -5,7 +5,6 @@ from typing import Tuple, Union, Iterable, Optional, Dict, List, Type
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from dataclasses import asdict
-from tqdm import tqdm
 import copy
 import time
 from .gnbeats_components import AutoregressiveBlock, GraphBlock, DoubleResStack
@@ -13,6 +12,25 @@ from ..config.config_classes import *
 from ..logging.logging import get_logger
 from ..utils.data_utils import Normalizer
 from ..utils.loss_functions import _get_loss_func
+
+# https://stackoverflow.com/questions/15411967/how-can-i-check-if-code-is-executed-in-the-ipython-notebook
+def is_notebook() -> bool:
+    try:
+        from IPython import get_ipython
+        shell = get_ipython().__class__.__name__
+        if shell == 'ZMQInteractiveShell':
+            return True   # Jupyter notebook or qtconsole
+        elif shell == 'TerminalInteractiveShell':
+            return False  # Terminal running IPython
+        else:
+            return False  # Other type (?)
+    except NameError:
+        return False      # Probably standard Python interpreter
+
+if is_notebook():
+    from tqdm.notebook import tqdm
+else:
+    from tqdm import tqdm
 
 
 class GNBEATS(nn.Module):
@@ -47,7 +65,7 @@ class GNBEATS(nn.Module):
     basis_types = {0: "trend", 1: "season", 2: "identity"}
     def __init__(
             self, window: int, horizon: int, num_nodes: int, embed_dim: int, 
-            node_mod: bool=True, share_params: bool=True,
+            node_mod: bool=True, share_params: bool=True, block_dropout_prob: float=0.25,
             num_ar_blocks: Optional[Union[int, Tuple[int]]]=None, 
             num_graph_blocks: Optional[Union[int, Tuple[int]]]=None, 
             ar_block_order: Optional[Iterable]=[0, 1, 2, 0, 0, 1, 1, 2, 2], 
@@ -103,7 +121,8 @@ class GNBEATS(nn.Module):
         block_grouping = torch.cat((torch.tensor(ar_block_order), (3 + torch.tensor(graph_block_order))))
         self.device = device if device else torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         node_embeddings = node_embeddings if node_embeddings else torch.randn(num_nodes, 2*embed_dim) # (V, 2*D)
-        self.model = DoubleResStack(blocks, node_embeddings, block_grouping).to(self.device)
+        self.model = DoubleResStack(
+            blocks, node_embeddings, block_grouping, block_dropout_prob).to(self.device)
         self.optimizer = optimizer if optimizer else torch.optim.Adam(params=self.model.parameters())
         self.loss = loss
         self.loss_func = _get_loss_func(loss, self.device, main_seasonality)
@@ -147,7 +166,8 @@ class GNBEATS(nn.Module):
             summary_writer: Optional[SummaryWriter]=None) -> List[float]:
         self.model.train()
         epoch_losses = []
-        for inputs, targets in tqdm(train_loader, desc="Training", position=1):
+        # for inputs, targets in tqdm(train_loader, desc="Training", position=1, leave=True):
+        for inputs, targets in train_loader:
             self.optimizer.zero_grad()
             preds = train_normalizer.unnormalize(self.model(inputs)).to(self.device)
             loss = self.loss_func(preds, targets)
@@ -164,7 +184,8 @@ class GNBEATS(nn.Module):
         self.model.eval()
         epoch_losses = []
         with torch.no_grad():
-            for inputs, targets in tqdm(valid_loader, desc="Validating", position=2):
+            # for inputs, targets in tqdm(valid_loader, desc="Validating", position=2, leave=True):
+            for inputs, targets in valid_loader:
                 preds = valid_normalizer.unnormalize(self.model(inputs)).to(self.device)
                 loss = self.loss_func(preds, targets)
                 epoch_losses.append(loss.item())

@@ -1,0 +1,18 @@
+name: gnbeats-env
+channels:
+  - defaults
+  - pytorch
+  - conda-forge
+dependencies:
+  - python==3.8.3
+  - pytorch=1.12
+  - matplotlib=3.7
+  - pip=23.0
+  - pip:
+    - numpy==1.23.5
+    - pandas==1.4.1
+    - torch_geometric==2.2.0
+    - torch_scatter==2.1.1
+    - tqdm==4.65.0
+    - ipython==8.12.0
+prefix: ../envs
