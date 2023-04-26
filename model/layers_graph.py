@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from torch_geometric.nn import MessagePassing
 from torch_geometric.utils import add_self_loops, degree, dense_to_sparse
 from typing import Optional, Tuple, Union
-from .. utils.util_functions import ComplexActivation
+from ..utils.util_functions import ComplexActivation
 from .layers_temporal import FullyConnectedNet
 from .tcn import TCN
 from .scinet import StackedSCINet
