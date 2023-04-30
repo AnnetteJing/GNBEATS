@@ -5,8 +5,9 @@ channels:
   - pyg
   - conda-forge
 dependencies:
-  - python==3.8.3
+  - python=3.9
   - pytorch=1.12
+  - torchvision=0.13.0
   - pytorch-sparse==0.6.16
   - matplotlib=3.7
   - ipywidgets
@@ -20,4 +21,8 @@ dependencies:
     - ipython==8.12.0
     - tensorboard==2.8.0
     - protobuf==3.20.*
+    # Optional:
+    - notebook
+    - nbformat
+    - nbconvert
 prefix: ../envs

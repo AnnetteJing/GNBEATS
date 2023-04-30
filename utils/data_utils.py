@@ -122,7 +122,7 @@ def get_loader_normalizer(
         data: Union[np.array, torch.Tensor], batch_size: int, window: int, horizon: int, 
         train_interval: int, test_interval: int, node_dim: int=0,
         train_shuffle: bool=True, normalization: str="z_score",
-        train: Union[int, float]=0.7, valid: Union[int, float]=0.2, 
+        train: Union[int, float]=0.6, valid: Union[int, float]=0.2, 
         by_ratio: bool=True, device: Optional[str]=None, return_df: bool=False):
     data = data if node_dim == 0 else data.T # (V, T)
     df_train, df_valid, df_test = split_data(data, train, valid, by_ratio)

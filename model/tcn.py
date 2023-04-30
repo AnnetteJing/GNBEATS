@@ -1,7 +1,6 @@
 import numpy as np
 import torch
 import torch.nn as nn
-# from torch.nn.utils import weight_norm
 from typing import Optional, Union, Tuple
 from .layers_temporal import ParallelConv1d, ParallelCausalConv1d
 

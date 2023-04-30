@@ -1,15 +1,16 @@
+import os
 import numpy as np
 import torch
 import torch.nn as nn
-from typing import Tuple, Union, Iterable, Optional, Dict, List, Type
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
+from typing import Tuple, Union, Iterable, Optional, Dict, List, Type
 from dataclasses import asdict
 import copy
 import time
 from .gnbeats_components import AutoregressiveBlock, GraphBlock, DoubleResStack
 from ..config.config_classes import *
-from ..logging.logging import get_logger
+from ..logging.logging import _get_logger
 from ..utils.data_utils import Normalizer
 from ..utils.loss_functions import _get_loss_func
 
@@ -65,15 +66,16 @@ class GNBEATS(nn.Module):
     basis_types = {0: "trend", 1: "season", 2: "identity"}
     def __init__(
             self, window: int, horizon: int, num_nodes: int, embed_dim: int, 
-            node_mod: bool=True, share_params: bool=True, block_dropout_prob: float=0.25,
+            node_mod: bool=True, share_params: bool=True, block_dropout_prob: float=0,
+            l1_penalty_linear: float=1e-5, l1_penalty_conv: float=1e-5, 
             num_ar_blocks: Optional[Union[int, Tuple[int]]]=None, 
             num_graph_blocks: Optional[Union[int, Tuple[int]]]=None, 
             ar_block_order: Optional[Iterable]=[0, 1, 2, 0, 0, 1, 1, 2, 2], 
             graph_block_order: Optional[Iterable]=[0, 1, 2, 0, 0, 1, 1, 2, 2],
             trend_deg: int=3, season_deg: Optional[int]=None,
             trend_include_id: bool=True, season_include_id: bool=True, 
-            ar_theta_net: Union[str, List[str]]="SCINet", 
-            graph_theta_net: Union[str, List[str]]="SCINet", 
+            ar_theta_net: Union[str, List[str]]="TCN", 
+            graph_theta_net: Union[str, List[str]]="TCN", 
             fc_net_kwargs: Optional[ConfigFC]=None,
             tcn_kwargs: Optional[ConfigTCN]=None,
             scinet_kwargs: Optional[ConfigSCINet]=None,
@@ -84,7 +86,8 @@ class GNBEATS(nn.Module):
             loss: str="mse", 
             main_seasonality: Optional[int]=None, 
             debug: bool=False, 
-            log_filename: Optional[str]="output.log"
+            log_filename: Optional[str]="output.log",
+            model_path: Optional[str]="models"
             ): 
         super().__init__()
         self.window = window # W
@@ -125,8 +128,29 @@ class GNBEATS(nn.Module):
             blocks, node_embeddings, block_grouping, block_dropout_prob).to(self.device)
         self.optimizer = optimizer if optimizer else torch.optim.Adam(params=self.model.parameters())
         self.loss = loss
-        self.loss_func = _get_loss_func(loss, self.device, main_seasonality)
-        self.logger = get_logger(debug=debug, filename=log_filename)
+        self.regularization = {
+            "block_dropout_prob": block_dropout_prob, 
+            "l1_penalty_linear": l1_penalty_linear, 
+            "l1_penalty_conv": l1_penalty_conv}
+        self.loss_func = self._loss_func(loss, main_seasonality)
+        self.logger = _get_logger(debug=debug, filename=log_filename)
+        self.model_path = model_path
+
+    def _get_block_reg(self):
+        l1_reg = 0
+        for block in self.model.blocks:
+            for layer in block.modules():
+                if self.regularization["l1_penalty_linear"] > 0 and isinstance(layer, nn.Linear):
+                    l1_reg += self.regularization["l1_penalty_linear"] * torch.sum(torch.abs(layer.weight))
+                elif self.regularization["l1_penalty_conv"] > 0 and isinstance(layer, nn.Conv2d):
+                    l1_reg += self.regularization["l1_penalty_conv"] * torch.sum(torch.abs(layer.weight))
+        return l1_reg
+    
+    def _loss_func(self, loss, main_seasonality):
+        base_loss = _get_loss_func(loss, self.device, main_seasonality)
+        def reg_loss(targets, preds):
+            return base_loss(targets, preds) + self._get_block_reg()
+        return reg_loss
         
     def _get_blocks(
             self, block_order: Iterable, theta_net: List[str], 
@@ -160,13 +184,12 @@ class GNBEATS(nn.Module):
                                 **asdict(self.theta_net_kwargs[theta_net[block_type]]))
                         blocks.append(block)
         return blocks
-
+    
     def _train_epoch(
             self, train_loader: DataLoader, train_normalizer: Normalizer, 
             summary_writer: Optional[SummaryWriter]=None) -> List[float]:
         self.model.train()
         epoch_losses = []
-        # for inputs, targets in tqdm(train_loader, desc="Training", position=1, leave=True):
         for inputs, targets in train_loader:
             self.optimizer.zero_grad()
             preds = train_normalizer.unnormalize(self.model(inputs)).to(self.device)
@@ -184,7 +207,6 @@ class GNBEATS(nn.Module):
         self.model.eval()
         epoch_losses = []
         with torch.no_grad():
-            # for inputs, targets in tqdm(valid_loader, desc="Validating", position=2, leave=True):
             for inputs, targets in valid_loader:
                 preds = valid_normalizer.unnormalize(self.model(inputs)).to(self.device)
                 loss = self.loss_func(preds, targets)
@@ -195,7 +217,17 @@ class GNBEATS(nn.Module):
 
     def fit(
             self, loader: Dict[str, DataLoader], normalizer: Dict[str, Normalizer], 
-            num_epochs: int=100, early_stop_patience: int=15, use_tensor_board: bool=True):
+            num_epochs: int=100, early_stop_patience: int=15, save_model: bool=True,
+            use_tensor_board: bool=True):
+        """
+        -------Arguments-------
+        loader: Dictionary of dataloaders. Key "train" required, key "valid" optional
+        normalizer: Dictionary of normalizers. Key "train" required, key "valid" optional
+        num_epochs: Number of epochs / passes through the data
+        early_stop_patience: #epochs of valid loss not decreasing allowed before training is stopped
+        save_model: Save self.model.state_dict() to disk (model with lowest valid loss) if True
+        use_tensor_board: Use tensorboard if True
+        """
         summary_writer = SummaryWriter() if use_tensor_board else None
         self.losses = {"train": []}
         valid_loader, valid_normalizer = loader.get("valid"), normalizer.get("valid") # None if no "valid" key
@@ -206,7 +238,7 @@ class GNBEATS(nn.Module):
             # Train
             train_epoch_losses = self._train_epoch(loader["train"], normalizer["train"], summary_writer)
             train_epoch_avg_loss = np.mean(train_epoch_losses)
-            if train_epoch_avg_loss > 1e6:
+            if train_epoch_avg_loss > 1e9:
                 self.logger.warning("Gradient explosion detected. Ending...")
                 break
             self.losses["train"].extend(train_epoch_losses)
@@ -229,6 +261,97 @@ class GNBEATS(nn.Module):
         mins = (train_time - hrs*3600) // 60
         secs = train_time - hrs*3600 - mins*60
         self.logger.info(f"Total training time: {hrs}h{mins}m{secs}s, Best loss: {best_loss :.4f}")
+        self.model.load_state_dict(best_model) # Use the best model as the final model
+        if save_model:
+            current_time = time.strftime("%Y-%m-%d_%H:%M", time.localtime(time.time()))
+            if not os.path.exists(self.model_path):
+                os.makedirs(self.model_path)
+            model_path = os.path.join(self.model_path, f"{current_time}_exp.pth")
+            self.logger.info("Saving current best model to " + model_path)
+            torch.save(best_model, model_path)
+    
+    def test(
+            self, test_loader: Union[DataLoader, Dict[str, DataLoader]], 
+            test_normalizer: Union[Normalizer, Dict[str, Normalizer]], 
+            metrics: Union[List[str], str]=["rmse", "mae", "mape"], 
+            seasonality: Optional[int]=None, verbose: bool=False) -> Dict[str, float]:
+        """
+        -------Arguments-------
+        test_loader, test_normalizer: Dataloader & normalizer for test data
+        metrics: List of evaluation metrics to use
+            A subset of "mse", "rmse", "mae", "mape", "wmape", "smape", "mase"
+        seasonality: Optional argument for "mase"
+        verbose: Print out contents of output if True
+        --------Outputs--------
+        output: Dictionary of the average loss & metrics
+        """
+        test_loader = test_loader["test"] if isinstance(test_loader, dict) else test_loader
+        test_normalizer = test_normalizer["test"] if isinstance(test_normalizer, dict) else test_normalizer
+        if not hasattr(metrics, '__len__'):
+            metrics = [metrics]
+        metrics = {metric: _get_loss_func(metric, self.device, seasonality) for metric in metrics}
+        output = dict()
+        self.model.eval()
+        with torch.no_grad():
+            for inputs, targets in tqdm(test_loader, desc="Batch", position=0):
+                preds = test_normalizer.unnormalize(self.model(inputs)).to(self.device)
+                output.setdefault("loss", []).append(self.loss_func(preds, targets).item())
+                for metric, metric_func in metrics.items():
+                    output.setdefault(metric, []).append(metric_func(preds, targets).item())
+        output = {key: np.average(vals) for key, vals in output.items()}
+        output_msg = "Loss = {avg_loss:.2f}".format(avg_loss=output["loss"])
+        for metric in metrics.keys():
+            output_msg += f" | {str.upper(metric)} = {output[metric]:.2f}"
+        self.logger.info(output_msg)
+        if verbose:
+            print(output_msg)
+        return output
+    
+    def predict(
+            self, data: Union[np.array, torch.Tensor], decompose: bool=True, verbose: bool=True, 
+            normalizer: Optional[Normalizer]=None, norm_method: Optional[str]="z_score"
+            ) -> Union[Tuple[torch.Tensor, torch.Tensor], torch.Tensor]:
+        """
+        -------Arguments-------
+        data: (B, V, T) or (V, T), T >= W
+        decompose: Return preds_decomp if True
+        --------Outputs--------
+        preds: (B, V, H) or (V, H)
+        preds_decomp: (B, V, H, 6) or (V, H, 6)
+            preds_decomp[v, :, g] is the gth component for series/node v, where g is
+            0 = AR Trend, 1 = AR Seasonality, 2 = AR Identity
+            3 = Graph Trend, 4 = Graph Seasonality, 5 = Graph Identity
+        """
+        if len(data.shape) == 2: # (V, T)
+            data = data.reshape(1, *data.shape) # (B=1, V, T)
+        _, num_nodes, time_steps = data.shape
+        assert num_nodes == self.num_nodes, f"Input nodes {num_nodes} does not equal {self.num_nodes}"
+        assert time_steps >= self.window, f"Input time steps {time_steps} < {self.window}"
+        if time_steps > self.window:
+            time_step_msg = f"""\
+            Input time steps {time_steps} > {self.window}, using last {self.window} observations as input.\
+            """
+            self.logger.info(time_step_msg)
+            if verbose:
+                print(time_step_msg)
+            data = data[:, :, -self.window:] # (B, V, W)
+        if type(data).__module__ == np.__name__:
+            data = torch.tensor(data)
+        if not normalizer:
+            normalizer = Normalizer(norm_method)
+        if decompose:
+            # B > 1: (B, V, H), (B, V, H, 6); B = 1: (V, H), (V, H, 6)
+            preds, preds_decomp = self.model(normalizer.normalize(data), decompose)
+            preds = normalizer.unnormalize(preds)
+            preds_decomp = normalizer.unnormalize(preds_decomp.transpose(-1, -2)).transpose(-1, -2)
+            return preds, preds_decomp
+        else: 
+            # B > 1: (B, V, H); B = 1: (V, H)
+            preds = normalizer.unnormalize(self.model(normalizer.normalize(data), decompose))
+            return preds
+    
+    
+
 
 
 
