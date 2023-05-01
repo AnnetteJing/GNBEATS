@@ -13,6 +13,7 @@ from ..config.config_classes import *
 from ..logging.logging import _get_logger
 from ..utils.data_utils import Normalizer
 from ..utils.loss_functions import _get_loss_func
+from ..utils.util_functions import init_params
 
 # https://stackoverflow.com/questions/15411967/how-can-i-check-if-code-is-executed-in-the-ipython-notebook
 def is_notebook() -> bool:
@@ -126,6 +127,7 @@ class GNBEATS(nn.Module):
         node_embeddings = node_embeddings if node_embeddings else torch.randn(num_nodes, 2*embed_dim) # (V, 2*D)
         self.model = DoubleResStack(
             blocks, node_embeddings, block_grouping, block_dropout_prob).to(self.device)
+        init_params(self.model)
         self.optimizer = optimizer if optimizer else torch.optim.Adam(params=self.model.parameters())
         self.loss = loss
         self.regularization = {
@@ -274,14 +276,14 @@ class GNBEATS(nn.Module):
             self, test_loader: Union[DataLoader, Dict[str, DataLoader]], 
             test_normalizer: Union[Normalizer, Dict[str, Normalizer]], 
             metrics: Union[List[str], str]=["rmse", "mae", "mape"], 
-            seasonality: Optional[int]=None, verbose: bool=False) -> Dict[str, float]:
+            seasonality: Optional[int]=None, return_output: bool=True
+            ) -> Dict[str, float]:
         """
         -------Arguments-------
         test_loader, test_normalizer: Dataloader & normalizer for test data
         metrics: List of evaluation metrics to use
             A subset of "mse", "rmse", "mae", "mape", "wmape", "smape", "mase"
         seasonality: Optional argument for "mase"
-        verbose: Print out contents of output if True
         --------Outputs--------
         output: Dictionary of the average loss & metrics
         """
@@ -303,12 +305,11 @@ class GNBEATS(nn.Module):
         for metric in metrics.keys():
             output_msg += f" | {str.upper(metric)} = {output[metric]:.2f}"
         self.logger.info(output_msg)
-        if verbose:
-            print(output_msg)
-        return output
+        if return_output:
+            return output
     
     def predict(
-            self, data: Union[np.array, torch.Tensor], decompose: bool=True, verbose: bool=True, 
+            self, data: Union[np.array, torch.Tensor], decompose: bool=True,
             normalizer: Optional[Normalizer]=None, norm_method: Optional[str]="z_score"
             ) -> Union[Tuple[torch.Tensor, torch.Tensor], torch.Tensor]:
         """
@@ -332,8 +333,6 @@ class GNBEATS(nn.Module):
             Input time steps {time_steps} > {self.window}, using last {self.window} observations as input.\
             """
             self.logger.info(time_step_msg)
-            if verbose:
-                print(time_step_msg)
             data = data[:, :, -self.window:] # (B, V, W)
         if type(data).__module__ == np.__name__:
             data = torch.tensor(data)

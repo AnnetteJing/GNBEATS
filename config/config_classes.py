@@ -35,7 +35,7 @@ class ConfigSCINet:
 
 @dataclass
 class ConfigGraphBlock:
-    adj_mat_activation: Optional[str] = "tanh"
+    adj_mat_activation: Optional[str] = "selu"
     update_activation: Optional[str] = None
     self_loops: bool = False
     thresh: float = 0.2

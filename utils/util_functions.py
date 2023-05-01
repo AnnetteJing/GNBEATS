@@ -132,4 +132,4 @@ def init_params(model: nn.Module):
         if param.dim() > 1:
             nn.init.xavier_uniform_(param)
         else:
-            nn.init.uniform(param)
+            nn.init.uniform_(param)

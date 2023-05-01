@@ -3,7 +3,8 @@ import torch
 import numpy as np
 import argparse
 from model.gnbeats import GNBEATS
-from utils.util_functions import init_seed, init_params
+from utils.data_utils import load_data_npz, get_loader_normalizer
+from utils.util_functions import init_seed
 
 
 parser = argparse.ArgumentParser(description="GNBEATS on PEMS dataset")
@@ -13,13 +14,18 @@ parser.add_argument('--norm_method', type=str, default='z_score')
 parser.add_argument('--device', type=str, default='cuda:0')
 parser.add_argument('--seed', type=int, default=4321)
 
+parser.add_argument('--batch_size', type=int, default=8)
 parser.add_argument('--window', type=int, default=12)
 parser.add_argument('--horizon', type=int, default=12)
-parser.add_argument('--embed_dim', type=int, default=8)
+parser.add_argument('--embed_dim', type=int, default=4)
 
 parser.add_argument('--train_percent', type=float, default=0.6)
 parser.add_argument('--valid_percent', type=float, default=0.2)
+parser.add_argument('--train_interval', type=int, default=1)
+parser.add_argument('--test_interval', type=int, default=1)
 parser.add_argument('--loss', type=str, default='mse')
+parser.add_argument('--num_epochs', type=int, default=100)
+parser.add_argument('--early_stop_patience', type=int, default=15)
 
 # Whether to perform node modifications
 parser.add_argument('--node_mod', action=argparse.BooleanOptionalAction)
@@ -42,9 +48,34 @@ parser.add_argument('--season_id', action=argparse.BooleanOptionalAction)
 parser.add_argument('--ar_theta_net', type=str, default='TCN', choices=['FC', 'TCN', 'SCINet'])
 parser.add_argument('--graph_theta_net', type=str, default='TCN')
 
+# Restrict data size for testing
+parser.add_argument('--restrict_node_dim', type=int, default=0)
+parser.add_argument('--restrict_time_steps', type=int, default=0)
+
 
 args = parser.parse_args()
 
 if __name__ == '__main__':
     init_seed(args.seed)
-    # model = 
+    data = load_data_npz(ds_folder="PEMS", ds_name=args.dataset).T # (V, T)
+    if args.restrict_node_dim > 0:
+        data = data[:args.restrict_node_dim]
+    if args.restrict_time_steps > 0:
+        data = data[:, :args.restrict_time_steps]
+    num_nodes = len(data) # V
+    loader, normalizer = get_loader_normalizer(
+        data, batch_size=args.batch_size, window=args.window, horizon=args.horizon, 
+        train_interval=args.train_interval, test_interval=args.test_interval,
+        normalization=args.norm_method, train=args.train_percent, valid=args.valid_percent, 
+        device=args.device)
+    model = GNBEATS(
+        window=args.window, horizon=args.horizon, num_nodes=num_nodes, embed_dim=args.embed_dim, 
+        node_mod=args.node_mod, share_params=args.share_params, block_dropout_prob=args.block_dropout_prob, 
+        l1_penalty_linear=args.l1_penalty_linear, l1_penalty_conv=args.l1_penalty_conv, 
+        ar_block_order=args.ar_block_order, graph_block_order=args.graph_block_order, 
+        trend_deg=args.trend_deg, season_deg=args.season_deg, 
+        trend_include_id=args.trend_id, season_include_id=args.season_id, 
+        ar_theta_net=args.ar_theta_net, graph_theta_net=args.graph_theta_net, 
+        device=args.device, loss=args.loss)
+    model.fit(loader, normalizer, num_epochs=args.num_epochs, early_stop_patience=args.early_stop_patience)
+    test_output = model.test(loader, normalizer, return_output=False)

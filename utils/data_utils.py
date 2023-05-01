@@ -120,7 +120,7 @@ def split_data(
 
 def get_loader_normalizer(
         data: Union[np.array, torch.Tensor], batch_size: int, window: int, horizon: int, 
-        train_interval: int, test_interval: int, node_dim: int=0,
+        train_interval: int=1, test_interval: int=1, node_dim: int=0,
         train_shuffle: bool=True, normalization: str="z_score",
         train: Union[int, float]=0.6, valid: Union[int, float]=0.2, 
         by_ratio: bool=True, device: Optional[str]=None, return_df: bool=False):

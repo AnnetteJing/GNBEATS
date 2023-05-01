@@ -25,4 +25,7 @@ dependencies:
     - notebook
     - nbformat
     - nbconvert
+    - sagemaker
+    - boto3
+    - awscli
 prefix: ../envs
