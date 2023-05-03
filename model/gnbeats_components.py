@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_scatter import scatter
 from typing import Tuple, Optional, Dict, Union
+import warnings
 from .layers_temporal import FullyConnectedNet
 from .tcn import TCN
 from .scinet import StackedSCINet
@@ -27,7 +28,11 @@ class DoubleResStack(nn.Module):
         if block_grouping is not None:
             assert len(blocks) == len(block_grouping)
         self.node_embeddings = nn.Parameter(node_embeddings, requires_grad=True)
-        self.dropout = nn.Dropout2d(dropout_prob) if dropout_prob > 0 else None
+        if dropout_prob > 0:
+            print("Warning: Behavior of nn.Dropout2d with 3D inputs will change in the future.")
+            self.dropout = nn.Dropout2d(dropout_prob)
+        else:
+            self.dropout = None
 
     def forward(
             self, x:torch.Tensor, return_decomposition: bool=False
@@ -50,9 +55,11 @@ class DoubleResStack(nn.Module):
         block_forecasts = torch.stack(block_forecasts, dim=-1) # (B, V, H, L)
         if self.dropout: # Zero out some of the L block outputs
             batch_size, num_nodes, horizon, num_blocks = block_forecasts.shape
-            block_forecasts = self.dropout(
-                block_forecasts.reshape(batch_size, num_nodes*horizon, num_blocks).permute(0, 2, 1)
-                ).permute(0, 2, 1).reshape(batch_size, num_nodes, horizon, num_blocks) # (B, V, H, L)
+            with warnings.catch_warnings(): # Catch nn.Dropout2d UserWarning
+                warnings.simplefilter("ignore")
+                block_forecasts = self.dropout(
+                    block_forecasts.reshape(batch_size, num_nodes*horizon, num_blocks).permute(0, 2, 1)
+                    ).permute(0, 2, 1).reshape(batch_size, num_nodes, horizon, num_blocks) # (B, V, H, L)
         if return_decomposition:
             assert self.block_grouping is not None, "Specify block_grouping for decomposition"
             decomposed_forecasts = scatter( # Default: reduce="sum"
@@ -286,6 +293,4 @@ class SeasonalityComponent(TimeComponent):
             [np.cos(2*np.pi*p*time_vec) for p in range(1, deg_half)] +
             [np.sin(2*np.pi*p*time_vec) for p in range(1, deg_half)]
             ), dtype=torch.float), requires_grad=False)
-            for i, time_vec in enumerate(self.time_vecs)
-            )
-
+            for i, time_vec in enumerate(self.time_vecs))

@@ -2,9 +2,9 @@ import os
 import torch
 import numpy as np
 import argparse
-from model.gnbeats import GNBEATS
-from utils.data_utils import load_data_npz, get_loader_normalizer
-from utils.util_functions import init_seed
+from ..model.gnbeats import GNBEATS
+from ..utils.data_utils import load_data_npz, get_loader_normalizer, get_data_from_loader
+from ..utils.util_functions import init_seed, plot_decomposition, plot_prediction
 
 
 parser = argparse.ArgumentParser(description="GNBEATS on PEMS dataset")
@@ -28,9 +28,9 @@ parser.add_argument('--num_epochs', type=int, default=100)
 parser.add_argument('--early_stop_patience', type=int, default=15)
 
 # Whether to perform node modifications
-parser.add_argument('--node_mod', action=argparse.BooleanOptionalAction)
+parser.add_argument('--node_mod', action=argparse.BooleanOptionalAction, default=False)
 # Whether to share parameters across blocks
-parser.add_argument('--share_params', action=argparse.BooleanOptionalAction)
+parser.add_argument('--share_params', action=argparse.BooleanOptionalAction, default=False)
 # Regularization settings
 parser.add_argument('--block_dropout_prob', type=float, default=0)
 parser.add_argument('--l1_penalty_linear', type=float, default=1e-5)
@@ -42,15 +42,19 @@ parser.add_argument('--graph_block_order', nargs='+', type=int, default=[0, 1, 2
 parser.add_argument('--trend_deg', type=int, default=3)
 parser.add_argument('--season_deg', type=int, default=12)
 # Whether to include a column of 1's in time components
-parser.add_argument('--trend_id', action=argparse.BooleanOptionalAction)
-parser.add_argument('--season_id', action=argparse.BooleanOptionalAction)
+parser.add_argument('--trend_id', action=argparse.BooleanOptionalAction, default=True)
+parser.add_argument('--season_id', action=argparse.BooleanOptionalAction, default=True)
 # Which network to use for basis coefficients
 parser.add_argument('--ar_theta_net', type=str, default='TCN', choices=['FC', 'TCN', 'SCINet'])
-parser.add_argument('--graph_theta_net', type=str, default='TCN')
+parser.add_argument('--graph_theta_net', type=str, default='TCN', choices=['FC', 'TCN', 'SCINet'])
 
 # Restrict data size for testing
 parser.add_argument('--restrict_node_dim', type=int, default=0)
 parser.add_argument('--restrict_time_steps', type=int, default=0)
+# Path to load model
+# parser.add_argument('--fit', action=argparse.BooleanOptionalAction)
+# parser.add_argument('--model_path', type=str, default="models/2023-05-02_1548_exp.pth")
+
 
 
 args = parser.parse_args()
@@ -77,5 +81,18 @@ if __name__ == '__main__':
         trend_include_id=args.trend_id, season_include_id=args.season_id, 
         ar_theta_net=args.ar_theta_net, graph_theta_net=args.graph_theta_net, 
         device=args.device, loss=args.loss)
+    print(f"Model initialized with {model.count_params()} parameters...")
+    print("Fitting model...")
     model.fit(loader, normalizer, num_epochs=args.num_epochs, early_stop_patience=args.early_stop_patience)
+    # if args.fit:
+    #     print("Fitting model...")
+    #     model.fit(loader, normalizer, num_epochs=args.num_epochs, early_stop_patience=args.early_stop_patience)
+    # else:
+    #     print("Loading model...")
+    #     model.load_state_dict(torch.load(args.model_path), strict=False)
+    print("Testing model...")
     test_output = model.test(loader, normalizer, return_output=False)
+    inputs, targets = get_data_from_loader(loader["test"])
+    preds, preds_decomp = model.predict(inputs, normalizer=normalizer["test"])
+    plot_decomposition(preds_decomp, nodes=range(min(num_nodes, 5)))
+    plot_prediction(preds, targets, nodes=range(min(num_nodes, 5)))

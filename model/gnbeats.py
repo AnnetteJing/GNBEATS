@@ -187,6 +187,12 @@ class GNBEATS(nn.Module):
                         blocks.append(block)
         return blocks
     
+    def count_params(self):
+        return sum(param.numel() for param in self.model.parameters() if param.requires_grad)
+    
+    def get_coef(self):
+        self.model.blocks
+    
     def _train_epoch(
             self, train_loader: DataLoader, train_normalizer: Normalizer, 
             summary_writer: Optional[SummaryWriter]=None) -> List[float]:
@@ -240,7 +246,7 @@ class GNBEATS(nn.Module):
             # Train
             train_epoch_losses = self._train_epoch(loader["train"], normalizer["train"], summary_writer)
             train_epoch_avg_loss = np.mean(train_epoch_losses)
-            if train_epoch_avg_loss > 1e9:
+            if train_epoch_avg_loss > 1e12:
                 self.logger.warning("Gradient explosion detected. Ending...")
                 break
             self.losses["train"].extend(train_epoch_losses)
@@ -259,18 +265,18 @@ class GNBEATS(nn.Module):
                         f"Validation performance did not improve for {early_stop_patience} epochs. Ending...")
                     break
         train_time = time.time() - start_time
-        hrs = train_time // 3600
-        mins = (train_time - hrs*3600) // 60
-        secs = train_time - hrs*3600 - mins*60
+        hrs = int(train_time // 3600)
+        mins = int((train_time - hrs*3600) // 60)
+        secs = int(train_time - hrs*3600 - mins*60)
         self.logger.info(f"Total training time: {hrs}h{mins}m{secs}s, Best loss: {best_loss :.4f}")
         self.model.load_state_dict(best_model) # Use the best model as the final model
         if save_model:
-            current_time = time.strftime("%Y-%m-%d_%H:%M", time.localtime(time.time()))
+            current_time = time.strftime("%Y-%m-%d_%H%M", time.localtime(time.time()))
             if not os.path.exists(self.model_path):
                 os.makedirs(self.model_path)
             model_path = os.path.join(self.model_path, f"{current_time}_exp.pth")
             self.logger.info("Saving current best model to " + model_path)
-            torch.save(best_model, model_path)
+            torch.save(self.model.state_dict(), model_path)
     
     def test(
             self, test_loader: Union[DataLoader, Dict[str, DataLoader]], 
@@ -316,6 +322,9 @@ class GNBEATS(nn.Module):
         -------Arguments-------
         data: (B, V, T) or (V, T), T >= W
         decompose: Return preds_decomp if True
+        normalizer: Normalizer for the input data
+            Data assumed to be normalized if a Normalizer is given.
+            If not given, initialize a new Normalizer based on the input data.
         --------Outputs--------
         preds: (B, V, H) or (V, H)
         preds_decomp: (B, V, H, 6) or (V, H, 6)
@@ -338,15 +347,19 @@ class GNBEATS(nn.Module):
             data = torch.tensor(data)
         if not normalizer:
             normalizer = Normalizer(norm_method)
+            data = normalizer.normalize(data)
         if decompose:
             # B > 1: (B, V, H), (B, V, H, 6); B = 1: (V, H), (V, H, 6)
-            preds, preds_decomp = self.model(normalizer.normalize(data), decompose)
-            preds = normalizer.unnormalize(preds)
-            preds_decomp = normalizer.unnormalize(preds_decomp.transpose(-1, -2)).transpose(-1, -2)
+            preds, preds_decomp_norm = self.model(data, decompose)
+            preds = normalizer.unnormalize(preds).detach()
+            preds_decomp = []
+            for i in range(6):
+                preds_decomp.append(normalizer.unnormalize(preds_decomp_norm[..., i]))
+            preds_decomp = torch.stack(preds_decomp, dim=-1)
             return preds, preds_decomp
         else: 
             # B > 1: (B, V, H); B = 1: (V, H)
-            preds = normalizer.unnormalize(self.model(normalizer.normalize(data), decompose))
+            preds = normalizer.unnormalize(self.model(data, decompose))
             return preds
     
     

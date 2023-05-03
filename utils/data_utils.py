@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import Dataset, DataLoader
-from typing import Optional, Union, Tuple
+from typing import Optional, Union, Dict
 
 
 def load_data_npz(ds_folder: str, ds_name: str):
@@ -19,6 +19,7 @@ class Normalizer:
         self.method = method
         self.norm_statistic = None
 
+    # Should only be called once 
     def normalize(self, data: torch.Tensor):
         """
         -------Arguments-------
@@ -143,6 +144,18 @@ def get_loader_normalizer(
         return loader, normalizer
 
 
-
+def get_data_from_loader(loader: DataLoader, batch_idx: Optional[int]=None):
+    """
+    -------Arguments-------
+    loader: Dataloader
+    batch_idx: Optional integer of selecting 
+    --------Outputs--------
+    inputs: (B, V, W) if batch_idx=None, else (1, V, W)
+    targets: (B, V, H) if batch_idx=None, else (1, V, H)
+    """
+    inputs, targets = iter(loader).next()
+    if batch_idx is not None:
+        inputs, targets = inputs[batch_idx].unsqueeze(0), targets[batch_idx].unsqueeze(0)
+    return inputs, targets
 
 

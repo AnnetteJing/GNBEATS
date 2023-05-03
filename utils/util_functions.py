@@ -46,7 +46,7 @@ class ComplexActivation(nn.Module):
 ## Plotting
 ##################################################
 def plot_decomposition(
-    preds_decomp: Union[torch.Tensor, np.array], nodes: Union[Iterable[int], int], 
+    preds_decomp: Union[torch.Tensor, np.array], nodes: Union[Iterable[int], int]=0, 
     batches: Union[Iterable[int], int]=0, plot_path: str="plots"):
     """
     -------Arguments-------
@@ -63,20 +63,20 @@ def plot_decomposition(
     """
     basis_types = {0: "trend", 1: "season", 2: "identity"}
     coef_types = {0: "AR", 1: "Graph"}
-    current_time = time.strftime("%Y-%m-%d_%H:%M", time.localtime(time.time()))
+    current_time = time.strftime("%Y-%m-%d_%H%M", time.localtime(time.time()))
     if not os.path.exists(plot_path):
         os.makedirs(plot_path)
     if len(preds_decomp.shape) == 3: # (V, H, 6)
         preds_decomp = preds_decomp.reshape(1, *preds_decomp.shape) # (B=1, V, H, 6)
-    nodes = (nodes) if not hasattr(nodes, '__len__') else nodes
-    batches = (batches) if not hasattr(batches, '__len__') else batches
+    nodes = [nodes] if not hasattr(nodes, '__len__') else nodes
+    batches = [batches] if not hasattr(batches, '__len__') else batches
     for b, v in product(batches, nodes):
         fig, axs = plt.subplots(ncols=2, nrows=3, figsize=(9, 9))
         fig.subplots_adjust(bottom=1, top=2)
         for i in range(6):
             basis, coef = i % 3, i // 3
             ax = axs[basis][coef]
-            ax.plot(preds_decomp[b, v:, i])
+            ax.plot(preds_decomp[b, v, :, i])
             ax.grid(visible=True, which='major', linestyle='--')
             ax.set_title(f"{coef_types[coef]} {basis_types[basis]}")
         fig_name = f"{current_time}_batch{b}_node{v}_decomp.jpeg"
@@ -85,7 +85,7 @@ def plot_decomposition(
 
 def plot_prediction(
     preds: Union[torch.Tensor, np.array], targets: Union[torch.Tensor, np.array], 
-    nodes: Union[Iterable[int], int], batches: Union[Iterable[int], int]=0, 
+    nodes: Union[Iterable[int], int]=0, batches: Union[Iterable[int], int]=0, 
     plot_path: str="plots"):
     """
     -------Arguments-------
@@ -98,7 +98,7 @@ def plot_prediction(
     len(nodes)*len(batches) number of plots will be saved to plot_path, 
     each named {current_time}_batch{b}_node{v}.jpeg
     """
-    current_time = time.strftime("%Y-%m-%d_%H:%M", time.localtime(time.time()))
+    current_time = time.strftime("%Y-%m-%d_%H%M", time.localtime(time.time()))
     if not os.path.exists(plot_path):
         os.makedirs(plot_path)
     if len(preds.shape) == 2: # (V, H)
@@ -106,16 +106,20 @@ def plot_prediction(
     if len(targets.shape) == 2: # (V, H)
         targets = targets.reshape(1, *targets.shape) # (B=1, V, H)
     assert preds.shape == targets.shape
-    nodes = (nodes) if not hasattr(nodes, '__len__') else nodes
-    batches = (batches) if not hasattr(batches, '__len__') else batches
+    nodes = [nodes] if not hasattr(nodes, '__len__') else nodes
+    batches = [batches] if not hasattr(batches, '__len__') else batches
     for b, v in product(batches, nodes):
         fig, ax = plt.subplots(ncols=1, nrows=1, figsize=(9, 5))
-        ax.plot(preds, label="prediction")
-        ax.plot(targets, label="target")
+        ax.plot(preds[b, v], label="prediction")
+        ax.plot(targets[b, v], label="target")
         ax.grid(visible=True, which='major', linestyle='--')
         ax.legend(loc=2)
         fig_name = f"{current_time}_batch{b}_node{v}.jpeg"
         fig.savefig(os.path.join(plot_path, fig_name), bbox_inches='tight')
+
+
+def visualize_adj_mat():
+    None
 
 
 ##################################################
