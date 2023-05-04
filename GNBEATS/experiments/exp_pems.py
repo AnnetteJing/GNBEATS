@@ -2,9 +2,9 @@ import os
 import torch
 import numpy as np
 import argparse
-from ..model.gnbeats import GNBEATS
-from ..utils.data_utils import load_data_npz, get_loader_normalizer, get_data_from_loader
-from ..utils.util_functions import init_seed, plot_decomposition, plot_prediction
+from GNBEATS.model.gnbeats import GNBEATS
+from GNBEATS.utils.data_utils import load_data_npz, get_loader_normalizer, get_data_from_loader
+from GNBEATS.utils.util_functions import init_seed, plot_decomposition, plot_prediction
 
 
 parser = argparse.ArgumentParser(description="GNBEATS on PEMS dataset")

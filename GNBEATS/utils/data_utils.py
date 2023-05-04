@@ -5,10 +5,12 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 from typing import Optional, Union, Dict
 
+from pathlib import Path
+path_to_datafolder = Path( os.path.abspath(os.path.dirname(__file__)) ) / ".." / "datasets"
 
 def load_data_npz(ds_folder: str, ds_name: str):
     data_file = os.path.join(
-        "/Users/sleeper/Desktop/DL_Forecasting/GNBEATS/datasets", 
+        path_to_datafolder,
         ds_folder, ds_name + ".npz")
     data = np.load(data_file, allow_pickle=True)["data"].squeeze()
     return data
