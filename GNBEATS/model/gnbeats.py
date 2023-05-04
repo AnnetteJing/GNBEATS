@@ -9,11 +9,11 @@ from dataclasses import asdict
 import copy
 import time
 from .gnbeats_components import AutoregressiveBlock, GraphBlock, DoubleResStack
-from ..config.config_classes import *
-from ..logging.logging import _get_logger
-from ..utils.data_utils import Normalizer
-from ..utils.loss_functions import _get_loss_func
-from ..utils.util_functions import init_params
+from GNBEATS.config.config_classes import *
+from GNBEATS.logging.logging import _get_logger
+from GNBEATS.utils.data_utils import Normalizer
+from GNBEATS.utils.loss_functions import _get_loss_func
+from GNBEATS.utils.util_functions import init_params
 
 # https://stackoverflow.com/questions/15411967/how-can-i-check-if-code-is-executed-in-the-ipython-notebook
 def is_notebook() -> bool:
