@@ -12,7 +12,8 @@ def _get_loss_func(loss: str, device: str, seasonality: Optional[int]=None):
         return nn.L1Loss().to(device)
     elif loss == "mape":
         def MAPE(yhat: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-            return torch.mean(torch.abs(yhat - y)/torch.abs(torch.where(y < 1e-5, 1e-5, y)))
+            numerator = torch.abs(torch.where(torch.abs(y) < 1e-5, torch.sign(y)*1e-5, y))
+            return torch.mean(torch.abs(yhat - y)/numerator)
         return MAPE
     elif loss == "wmape":
         def WMAPE(yhat: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
