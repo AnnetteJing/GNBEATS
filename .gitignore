@@ -4,3 +4,4 @@
 *.ipynb_checkpoints
 *.log
 plots/
+state_dicts/

@@ -35,7 +35,7 @@ class DoubleResStack(nn.Module):
             self.dropout = None
 
     def forward(
-            self, x:torch.Tensor, return_decomposition: bool=False
+            self, x:torch.Tensor, return_decomposition: bool=False, detach: bool=False
             ) -> Union[Tuple[torch.Tensor, torch.Tensor], torch.Tensor]:
         """
         -------Arguments-------
@@ -68,11 +68,14 @@ class DoubleResStack(nn.Module):
             assert self.block_grouping is not None, "Specify block_grouping for decomposition"
             decomposed_forecasts = scatter( # Default: reduce="sum"
                 block_forecasts, self.block_grouping, dim=-1) # (B, V, H, G)
-            forecasts = torch.squeeze(torch.sum(decomposed_forecasts, axis=-1))
-            decomposed_forecasts = torch.squeeze(decomposed_forecasts.detach())
-            return forecasts, decomposed_forecasts # (B, V, H), (B, V, H, G) or (V, H), (V, H, G)
+            forecasts = torch.sum(decomposed_forecasts, axis=-1) # (B, V, H)
+            if detach:
+                return forecasts.detach(), decomposed_forecasts.detach()
+            else:
+                return forecasts, decomposed_forecasts
         else:
-            return torch.sum(block_forecasts, axis=-1) # (B, V, H)
+            forecasts = torch.sum(block_forecasts, axis=-1) # (B, V, H)
+            return forecasts.detach() if detach else forecasts
 
 
 ##################################################
@@ -340,11 +343,11 @@ class TrendComponent(TimeComponent):
 
     def get_basis(self) -> torch.Tensor:
         return (
-            nn.Parameter(torch.tensor(
+            torch.tensor(
             np.concatenate([
             np.power(time_vec, p)[np.newaxis, :]
             for p in range(0 if self.include_identity else 1, self.deg + 1)
-            ]), dtype=torch.float), requires_grad=False)
+            ]), dtype=torch.float, requires_grad=False)
             for time_vec in self.time_vecs)
 
 
@@ -360,10 +363,10 @@ class SeasonalityComponent(TimeComponent):
     def get_basis(self) -> torch.Tensor:
         deg_half = self.deg // 2
         return (
-            nn.Parameter(torch.tensor(
+            torch.tensor(
             np.stack(
             ([np.ones(self.sizes[i])] if self.include_identity else []) + 
             [np.cos(2*np.pi*p*time_vec) for p in range(1, deg_half)] +
             [np.sin(2*np.pi*p*time_vec) for p in range(1, deg_half)]
-            ), dtype=torch.float), requires_grad=False)
+            ), dtype=torch.float, requires_grad=False)
             for i, time_vec in enumerate(self.time_vecs))

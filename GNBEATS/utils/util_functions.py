@@ -50,7 +50,7 @@ def plot_decomposition(
     batches: Union[Iterable[int], int]=0, plot_path: str="plots"):
     """
     -------Arguments-------
-    preds_decomp: (B, V, H, 6) or (V, H, 6)
+    preds_decomp: (B, V, T, 8) or (V, T, 8)
         preds_decomp[v, :, g] is the gth component for series/node v, where g is
         6 = Static Trend, 7 = Static Seasonality,
         0 = AR Trend, 1 = AR Seasonality, 2 = AR Identity,
@@ -67,8 +67,8 @@ def plot_decomposition(
     current_time = time.strftime("%Y-%m-%d_%H%M", time.localtime(time.time()))
     if not os.path.exists(plot_path):
         os.makedirs(plot_path)
-    if len(preds_decomp.shape) == 3: # (V, H, 8)
-        preds_decomp = preds_decomp.reshape(1, *preds_decomp.shape) # (B=1, V, H, 8)
+    if len(preds_decomp.shape) == 3: # (V, T, 8)
+        preds_decomp = preds_decomp.reshape(1, *preds_decomp.shape) # (B=1, V, T, 8)
     nodes = [nodes] if not hasattr(nodes, '__len__') else nodes
     batches = [batches] if not hasattr(batches, '__len__') else batches
     for b, v in product(batches, nodes):
@@ -90,8 +90,8 @@ def plot_prediction(
     plot_path: str="plots"):
     """
     -------Arguments-------
-    preds: (B, V, H) or (V, H)
-    targets: (B, V, H) or (V, H)
+    preds: (B, V, T) or (V, T)
+    targets: (B, V, T) or (V, T)
     nodes: List of nodes in {0, ..., V - 1} to plot
     batches: List of batches in {0, ..., B - 1} to plot
     plot_path: Directory to save the plots to
@@ -102,10 +102,10 @@ def plot_prediction(
     current_time = time.strftime("%Y-%m-%d_%H%M", time.localtime(time.time()))
     if not os.path.exists(plot_path):
         os.makedirs(plot_path)
-    if len(preds.shape) == 2: # (V, H)
-        preds = preds.reshape(1, *preds.shape) # (B=1, V, H)
-    if len(targets.shape) == 2: # (V, H)
-        targets = targets.reshape(1, *targets.shape) # (B=1, V, H)
+    if len(preds.shape) == 2: # (V, T)
+        preds = preds.reshape(1, *preds.shape) # (B=1, V, T)
+    if len(targets.shape) == 2: # (V, T)
+        targets = targets.reshape(1, *targets.shape) # (B=1, V, T)
     assert preds.shape == targets.shape
     nodes = [nodes] if not hasattr(nodes, '__len__') else nodes
     batches = [batches] if not hasattr(batches, '__len__') else batches

@@ -22,7 +22,7 @@ parser.add_argument('--train_percent', type=float, default=0.6)
 parser.add_argument('--valid_percent', type=float, default=0.2)
 parser.add_argument('--train_interval', type=int, default=1)
 parser.add_argument('--test_interval', type=int, default=1)
-parser.add_argument('--loss', type=str, default='mse', choices=['mse', "rmse", "mae", "mape", "wmape", "smape", "mase"])
+parser.add_argument('--loss', type=str, default='mae', choices=['mse', "rmse", "mae", "mape", "wmape", "smape", "mase"])
 parser.add_argument('--num_epochs', type=int, default=100)
 parser.add_argument('--early_stop_patience', type=int, default=15)
 

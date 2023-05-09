@@ -79,11 +79,11 @@ class GNBEATS(nn.Module):
             node_embeddings: Optional[torch.Tensor]=None,
             device: Optional[str]=None,
             optimizer: Optional[torch.optim.Optimizer]=None, 
-            loss: str="mse", 
+            loss: str="mae", 
             main_seasonality: Optional[int]=None, 
             debug: bool=False, 
             log_filename: Optional[str]="output.log",
-            model_path: Optional[str]="models"
+            model_path: Optional[str]="state_dicts"
             ): 
         super().__init__()
         self.window = window # W
@@ -363,18 +363,49 @@ class GNBEATS(nn.Module):
             normalizer = Normalizer(norm_method)
             data = normalizer.normalize(data)
         if decompose:
-            # B > 1: (B, V, H), (B, V, H, 8); B = 1: (V, H), (V, H, 8)
-            preds, preds_decomp_norm = self.model(data, decompose)
-            preds = normalizer.unnormalize(preds).detach()
-            preds_decomp = []
-            for i in range(8):
-                preds_decomp.append(normalizer.unnormalize(preds_decomp_norm[..., i]))
-            preds_decomp = torch.stack(preds_decomp, dim=-1)
+            preds, preds_decomp = self.model(data, decompose, detach=True)
+            # preds, preds_decomp_norm = self.model(data, decompose, detach=True)
+            preds = normalizer.unnormalize(preds).detach() # (B, V, H)
+            # preds_decomp = []
+            # for i in range(8):
+            #     preds_decomp.append(normalizer.unnormalize(preds_decomp_norm[..., i]))
+            # preds_decomp = torch.stack(preds_decomp, dim=-1) # (B, V, H, 8)
             return preds, preds_decomp
         else: 
-            # B > 1: (B, V, H); B = 1: (V, H)
-            preds = normalizer.unnormalize(self.model(data, decompose))
+            preds = normalizer.unnormalize(self.model(data, decompose, detach=True)) # (B, V, H)
             return preds
+        
+    def predict_k_step_ahead(
+            self, loader: Union[DataLoader, Dict[str, DataLoader]], 
+            normalizer: Union[Normalizer, Dict[str, Normalizer]], k: int=1):
+        assert k <= self.horizon
+        loader = loader["test"] if isinstance(loader, dict) else loader
+        normalizer = normalizer["test"] if isinstance(normalizer, dict) else normalizer
+        k_step_preds, k_step_preds_decomp, k_step_targets = [], [], []
+        k -= 1 # Switch to 0-indexing
+        self.model.eval()
+        with torch.no_grad():
+            for inputs, targets in tqdm(loader, desc="Batch", position=0):
+                preds, preds_decomp = self.model(inputs, return_decomposition=True, detach=True)
+                # preds, preds_decomp_norm = self.model(inputs, return_decomposition=True, detach=True)
+                preds = normalizer.unnormalize(preds) # (B, V, H)
+                # preds_decomp = []
+                # for i in range(8):
+                #     preds_decomp.append(normalizer.unnormalize(preds_decomp_norm[..., i]))
+                # preds_decomp = torch.stack(preds_decomp, dim=-1) # (B, V, H, 8)
+                for b in range(len(targets)): # Assumes dataset interval=1
+                    k_step_preds.append(preds[b, :, k]) # (V,)
+                    k_step_preds_decomp.append(preds_decomp[b, :, k, :].T) # (8, V)
+                    k_step_targets.append(targets[b, :, k]) # (V,)
+        k_step_preds = torch.stack(k_step_preds, dim=-1) # (V, T)
+        k_step_preds_decomp = torch.stack(k_step_preds_decomp, dim=-1).permute(1, 2, 0) # (V, T, 8)
+        k_step_targets = torch.stack(k_step_targets, dim=-1) # (V, T)
+        return k_step_preds, k_step_preds_decomp, k_step_targets
+                    
+
+
+
+        
     
     
 
